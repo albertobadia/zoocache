@@ -35,7 +35,7 @@ impl PrefixTrie {
     }
 
     #[inline]
-    pub fn invalidate(&self, tag: &str) {
+    pub fn invalidate(&self, tag: &str) -> u64 {
         let mut current = Arc::clone(&self.root);
         current.touch();
         for part in tag.split(':') {
@@ -57,12 +57,34 @@ impl PrefixTrie {
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        current.version.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+        let prev = current.version.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
             Some(v.max(now).max(v + 1))
-        }).ok();
+        }).unwrap();
+        
+        prev.max(now).max(prev + 1)
     }
 
     #[inline]
+    pub fn set_min_version(&self, tag: &str, version: u64) {
+        let mut current = Arc::clone(&self.root);
+        current.touch();
+        for part in tag.split(':') {
+            let next = if let Some(n) = current.children.get(part) {
+                Arc::clone(n.value())
+            } else {
+                let entry = current
+                    .children
+                    .entry(part.to_string())
+                    .or_insert_with(|| Arc::new(TrieNode::default()));
+                Arc::clone(entry.value())
+            };
+            current = next;
+            current.touch();
+        }
+        current.version.fetch_max(version, Ordering::SeqCst);
+    }
+
+
     pub fn get_path_versions<S: AsRef<str>>(&self, parts: &[S]) -> Vec<u64> {
         let mut versions = Vec::with_capacity(parts.len() + 1);
         let mut current = Arc::clone(&self.root);
@@ -375,10 +397,52 @@ mod tests {
         trie.prune(100); 
         assert_eq!(trie.root.children.len(), 1);
 
-        // To test real pruning we would need to wait or mock time. 
-        // For now, let's verify that it DOES prune if we give it age 0 and we wait a bit
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_secs(2)); // Increased from 100ms to 2s for u64 seconds resolution
         trie.prune(0);
         assert_eq!(trie.root.children.len(), 0);
+    }
+
+    #[test]
+    fn test_hlc_ratchet() {
+        let trie = PrefixTrie::new();
+        let tag = "test:hlc";
+        
+        let v1 = trie.invalidate(tag);
+        assert!(v1 > 0);
+        
+        // Force a future version artificially
+        let future_ver = v1 + 1_000_000_000; // +1 second roughly in nanos
+        trie.set_min_version(tag, future_ver);
+        
+        let current_ver = trie.get_tag_version(tag);
+        assert!(current_ver >= future_ver);
+        
+        // Now invalidate again. It should be > future_ver + 1 (Ratchet effect)
+        let v2 = trie.invalidate(tag);
+        assert!(v2 > future_ver);
+        
+        // Even if our local wall clock is behind future_ver, v2 must be ahead.
+        // (This guarantees causal consistency)
+    }
+
+    #[test]
+    fn test_hlc_fast_forward() {
+        let trie = PrefixTrie::new();
+        let tag = "test:fast_forward";
+        
+        // Initial state
+        let _v1 = trie.invalidate(tag);
+        
+        // Simulate receiving a message from a node far in the future
+        let far_future = u64::MAX - 1000;
+        trie.set_min_version(tag, far_future);
+        
+        assert_eq!(trie.get_tag_version(tag), far_future);
+        
+        // Invalidate locally
+        let v_new = trie.invalidate(tag);
+        
+        // MUST increment strictly from the highest seen version
+        assert!(v_new > far_future);
     }
 }

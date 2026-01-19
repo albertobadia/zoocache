@@ -21,7 +21,7 @@ impl RedisPubSubBus {
 
     pub fn start_listener<F>(self: &Arc<Self>, callback: F)
     where
-        F: Fn(&str) + Send + Sync + 'static,
+        F: Fn(&str, u64) + Send + Sync + 'static,
     {
         let client = self.client.clone();
         let channel = self.channel.clone();
@@ -53,8 +53,11 @@ impl RedisPubSubBus {
                 backoff_ms = 100; // Reset on success
 
                 while let Ok(msg) = pubsub.get_message() {
-                    if let Ok(tag) = msg.get_payload::<String>() {
-                        callback(&tag);
+                    if let Ok(payload) = msg.get_payload::<String>()
+                        && let Some((tag, ver_str)) = payload.rsplit_once('|')
+                        && let Ok(ver) = ver_str.parse::<u64>()
+                    {
+                        callback(tag, ver);
                     }
                 }
                 
@@ -66,9 +69,10 @@ impl RedisPubSubBus {
 }
 
 impl InvalidateBus for RedisPubSubBus {
-    fn publish(&self, tag: &str) {
+    fn publish(&self, tag: &str, version: u64) {
         if let Ok(mut conn) = self.client.get_connection() {
-            let _: Result<(), _> = conn.publish(&self.channel, tag);
+            let payload = format!("{}|{}", tag, version);
+            let _: Result<(), _> = conn.publish(&self.channel, payload);
         }
     }
 }

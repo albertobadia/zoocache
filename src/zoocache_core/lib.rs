@@ -25,14 +25,16 @@ struct Core {
     trie: PrefixTrie,
     flights: DashMap<String, Arc<Flight>>,
     default_ttl: Option<u64>,
+    #[allow(dead_code)]
+    read_extend_ttl: bool,
     tti_tx: Option<Sender<(String, u64)>>,
 }
 
 #[pymethods]
 impl Core {
     #[new]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None))]
-    fn new(storage_url: Option<&str>, bus_url: Option<&str>, prefix: Option<&str>, default_ttl: Option<u64>) -> PyResult<Self> {
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true))]
+    fn new(storage_url: Option<&str>, bus_url: Option<&str>, prefix: Option<&str>, default_ttl: Option<u64>, read_extend_ttl: bool) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => Arc::new(
                 RedisStorage::new(url, prefix)
@@ -64,8 +66,8 @@ impl Core {
                 );
 
                 let t_clone = trie.clone();
-                r_bus.start_listener(move |tag| {
-                    t_clone.invalidate(tag);
+                r_bus.start_listener(move |tag, ver| {
+                    t_clone.set_min_version(tag, ver);
                 });
                 r_bus
             }
@@ -73,7 +75,7 @@ impl Core {
         };
 
         let mut tti_tx = None;
-        if default_ttl.is_some() {
+        if default_ttl.is_some() && read_extend_ttl {
             let (tx, rx) = mpsc::channel::<(String, u64)>();
             let storage_worker = Arc::clone(&storage);
             
@@ -103,6 +105,7 @@ impl Core {
             trie,
             flights: DashMap::new(),
             default_ttl,
+            read_extend_ttl,
             tti_tx,
         })
     }
@@ -175,8 +178,8 @@ impl Core {
 
     fn invalidate(&self, py: Python, tag: &str) {
         py.detach(|| {
-            self.trie.invalidate(tag);
-            self.bus.publish(tag);
+            let new_ver = self.trie.invalidate(tag);
+            self.bus.publish(tag, new_ver);
         });
     }
 

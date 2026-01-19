@@ -9,5 +9,5 @@ impl LocalBus {
 }
 
 impl InvalidateBus for LocalBus {
-    fn publish(&self, _tag: &str) {}
+    fn publish(&self, _tag: &str, _version: u64) {}
 }

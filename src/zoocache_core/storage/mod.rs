@@ -29,7 +29,7 @@ pub(crate) struct CacheEntry {
 
 impl CacheEntry {
     pub fn serialize(&self, py: Python) -> PyResult<Vec<u8>> {
-        // 1. Convert Python object to a serializable Value via depythonize
+        // 1. Convert Python object to a serializable Value via depythonize (fallback due to pythonize limitations)
         let serde_val: serde_json::Value = pythonize::depythonize(self.value.bind(py))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
@@ -56,11 +56,11 @@ impl CacheEntry {
         let entry: SerializableCacheEntry = rmp_serde::from_slice(&decompressed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // 3. Deserialize MsgPack value to intermediate Value, then to Python
-        let serde_val: serde_json::Value = rmp_serde::from_slice(&entry.value)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        // 3. Deserialize MsgPack value directly to Python object (streaming/transcode)
+        let mut deserializer = rmp_serde::decode::Deserializer::new(&entry.value[..]);
+        let transcoder = serde_transcode::Transcoder::new(&mut deserializer);
         
-        let py_val = pythonize(py, &serde_val)
+        let py_val = pythonize(py, &transcoder)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
         Ok(Self {
