@@ -1,0 +1,15 @@
+[package]
+name = "zoocache"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "_zoocache"
+path = "src/zoocache_core/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+
+[dependencies]
+pyo3 = { version = "0.27.2", features = ["abi3-py310"] }
+dashmap = "6.1.0"
+sha2 = "0.10"

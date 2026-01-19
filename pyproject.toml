@@ -1,0 +1,31 @@
+[project]
+name = "zoocache"
+version = "0.1.0"
+description = "Cache that invalidates when your data changes, not when a timer expires. Rust-powered semantic invalidation for Python."
+readme = "README.md"
+license = { text = "MIT" }
+
+authors = [
+    { name = "Alberto Daniel Badia", email = "alberto_badia@enlacepatagonia.com" },
+]
+
+requires-python = ">=3.10"
+
+dependencies = []
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "zoocache._zoocache"
+python-source = "src"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.5",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.13",
+]
