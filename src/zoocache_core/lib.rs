@@ -1,3 +1,4 @@
+mod bus;
 mod flight;
 mod storage;
 mod trie;
@@ -6,28 +7,104 @@ use dashmap::DashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{complete_flight, try_enter_flight, wait_for_flight, Flight, FlightStatus};
-use storage::{CacheEntry, InMemoryStorage, Storage};
+use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{build_dependency_snapshots, validate_dependencies, PrefixTrie};
+use std::sync::mpsc::{self, Sender};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[pyclass]
 struct Core {
     storage: Arc<dyn Storage>,
+    bus: Arc<dyn InvalidateBus>,
     trie: PrefixTrie,
     flights: DashMap<String, Arc<Flight>>,
+    default_ttl: Option<u64>,
+    tti_tx: Option<Sender<(String, u64)>>,
 }
 
 #[pymethods]
 impl Core {
     #[new]
-    fn new() -> Self {
-        Self {
-            storage: Arc::new(InMemoryStorage::new()),
-            trie: PrefixTrie::new(),
-            flights: DashMap::new(),
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None))]
+    fn new(storage_url: Option<&str>, bus_url: Option<&str>, prefix: Option<&str>, default_ttl: Option<u64>) -> PyResult<Self> {
+        let storage: Arc<dyn Storage> = match storage_url {
+            Some(url) if url.starts_with("redis://") => Arc::new(
+                RedisStorage::new(url, prefix)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string()))?,
+            ),
+            Some(url) if url.starts_with("lmdb://") => {
+                let path = &url[7..];
+                Arc::new(
+                    LmdbStorage::new(path)
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?,
+                )
+            }
+            Some(url) => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Unsupported storage scheme: {}", url),
+                ))
+            }
+            None => Arc::new(InMemoryStorage::new()),
+        };
+
+        let trie = PrefixTrie::new();
+
+        let bus: Arc<dyn InvalidateBus> = match bus_url {
+            Some(url) => {
+                let channel = prefix.map(|p| format!("{}:invalidate", p));
+                let r_bus = Arc::new(
+                    RedisPubSubBus::new(url, channel.as_deref())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string()))?,
+                );
+
+                let t_clone = trie.clone();
+                r_bus.start_listener(move |tag| {
+                    t_clone.invalidate(tag);
+                });
+                r_bus
+            }
+            None => Arc::new(LocalBus::new()),
+        };
+
+        let mut tti_tx = None;
+        if default_ttl.is_some() {
+            let (tx, rx) = mpsc::channel::<(String, u64)>();
+            let storage_worker = Arc::clone(&storage);
+            
+            thread::spawn(move || {
+                let mut last_touches: HashMap<String, Instant> = HashMap::new();
+                while let Ok((key, ttl)) = rx.recv() {
+                    let now = Instant::now();
+                    if last_touches.get(&key).is_some_and(|&last| now.duration_since(last) < Duration::from_secs(60)) {
+                        continue;
+                    }
+                    
+                    storage_worker.touch(&key, ttl);
+                    last_touches.insert(key, now);
+                    
+                    // Periodic cleanup of last_touches to avoid memory leak
+                    if last_touches.len() > 10000 {
+                         last_touches.retain(|_, &mut instant| now.duration_since(instant) < Duration::from_secs(300));
+                    }
+                }
+            });
+            tti_tx = Some(tx);
         }
+
+        Ok(Self {
+            storage,
+            bus,
+            trie,
+            flights: DashMap::new(),
+            default_ttl,
+            tti_tx,
+        })
     }
 
     fn get_or_entry(&self, py: Python, key: &str) -> PyResult<(Option<Py<PyAny>>, bool)> {
@@ -56,40 +133,67 @@ impl Core {
     }
 
     #[pyo3(signature = (key, is_error, value=None))]
-    fn finish_flight(&self, key: &str, is_error: bool, value: Option<Py<PyAny>>) {
-        complete_flight(&self.flights, key, is_error, value);
+    fn finish_flight(&self, py: Python, key: &str, is_error: bool, value: Option<Py<PyAny>>) {
+        py.detach(|| complete_flight(&self.flights, key, is_error, value));
     }
 
     fn get(&self, py: Python, key: &str) -> PyResult<Option<Py<PyAny>>> {
-        let entry = match self.storage.get(key) {
+        let storage = Arc::clone(&self.storage);
+        let entry = py.detach(|| storage.get(key));
+
+        let entry = match entry {
             Some(e) => e,
             None => return Ok(None),
         };
 
-        if !validate_dependencies(&self.trie, &entry.dependencies) {
-            self.storage.remove(key);
+        let valid = py.detach(|| validate_dependencies(&self.trie, &entry.dependencies));
+        if !valid {
+            let storage = Arc::clone(&self.storage);
+            py.detach(|| storage.remove(key));
             return Ok(None);
+        }
+
+        // TTI: Deferred refresh
+        if let (Some(tx), Some(ttl)) = (&self.tti_tx, self.default_ttl) {
+            let _ = tx.send((key.to_string(), ttl));
         }
 
         Ok(Some(entry.value.clone_ref(py)))
     }
 
-    fn set(&self, key: String, value: Py<PyAny>, dependencies: Vec<String>) {
-        let snapshots = build_dependency_snapshots(&self.trie, dependencies);
+    #[pyo3(signature = (key, value, dependencies, ttl=None))]
+    fn set(&self, py: Python, key: String, value: Py<PyAny>, dependencies: Vec<String>, ttl: Option<u64>) {
+        let snapshots = py.detach(|| build_dependency_snapshots(&self.trie, dependencies));
         let entry = Arc::new(CacheEntry {
             value,
             dependencies: snapshots,
         });
-        self.storage.set(key, entry);
+        let storage = Arc::clone(&self.storage);
+        let final_ttl = ttl.or(self.default_ttl);
+        py.detach(|| storage.set(key, entry, final_ttl));
     }
 
-    fn invalidate(&self, tag: &str) {
-        self.trie.invalidate(tag);
+    fn invalidate(&self, py: Python, tag: &str) {
+        py.detach(|| {
+            self.trie.invalidate(tag);
+            self.bus.publish(tag);
+        });
     }
 
-    fn clear(&self) {
-        self.storage.clear();
-        self.trie.clear();
+    fn clear(&self, py: Python) {
+        let storage = Arc::clone(&self.storage);
+        py.detach(|| {
+            storage.clear();
+            self.trie.clear();
+        });
+    }
+
+    fn prune(&self, max_age_secs: u64) {
+        self.trie.prune(max_age_secs);
+    }
+
+    fn tag_version(&self, tag: &str) -> u64 {
+        self.trie.get_tag_version(tag)
     }
 
     fn version(&self) -> String {
@@ -98,16 +202,23 @@ impl Core {
 }
 
 #[pyfunction]
-#[pyo3(signature = (data, prefix=None))]
-fn hash_key(data: &[u8], prefix: Option<&str>) -> String {
+#[pyo3(signature = (obj, prefix=None))]
+fn hash_key(_py: Python<'_>, obj: Bound<'_, PyAny>, prefix: Option<&str>) -> PyResult<String> {
+    let serde_val: serde_json::Value = pythonize::depythonize(&obj)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
+    
+    let data = rmp_serde::to_vec(&serde_val)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
     let mut hasher = Sha256::new();
-    hasher.update(data);
+    hasher.update(&data);
     let digest = hasher.finalize();
     let hex = format!("{:x}", digest);
-    match prefix {
+    let result = match prefix {
         Some(p) => format!("{}:{}", p, &hex[..16]),
         None => hex[..16].to_string(),
-    }
+    };
+    Ok(result)
 }
 
 #[pymodule]

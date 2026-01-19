@@ -21,6 +21,10 @@ pub(crate) fn try_enter_flight(
     flights: &DashMap<String, Arc<Flight>>,
     key: &str,
 ) -> (Arc<Flight>, bool) {
+    if let Some(flight) = flights.get(key) {
+        return (Arc::clone(flight.value()), false);
+    }
+
     let mut is_leader = false;
     let flight = flights.entry(key.to_string()).or_insert_with(|| {
         is_leader = true;

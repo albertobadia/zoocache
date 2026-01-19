@@ -1,9 +1,9 @@
 import pytest
-from zoocache.core import _core
+import zoocache
 
 
 @pytest.fixture(autouse=True)
 def clear_cache():
     """Clear the Rust cache store and Trie before each test."""
-    _core.clear()
+    zoocache.clear()
     yield

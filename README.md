@@ -147,9 +147,9 @@ When you read from cache, Zoocache snapshots the versions along the path. On cac
 - Multi-tenant apps where you need per-tenant invalidation
 - Complex data relationships (orders → products → inventory)
 - High read/write ratio where TTL causes either stale data or cache churn
+- **Distributed systems** (using Redis storage + Pub/Sub invalidation)
 
 ❌ **Not ideal:**
-- Distributed systems (currently in-process only, Redis planned)
 - Data that genuinely expires by time (session tokens, rate limits)
 
 ---
@@ -187,7 +187,7 @@ Examples:
 
 ## Roadmap
 
-- [ ] Redis storage backend
+- [ ] Prometheus metrics
 - [ ] Prometheus metrics
 - [ ] Django / SQLAlchemy plugins
 - [ ] Dependency propagation for nested `@cacheable`
