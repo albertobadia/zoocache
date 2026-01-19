@@ -1,0 +1,28 @@
+<svg width="600" height="200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100%" height="100%" fill="#1a1a1a"/>
+  
+  <!-- Pipeline Steps -->
+  <rect x="30" y="80" width="100" height="40" rx="5" fill="#2d2d2d" stroke="#3776ab" stroke-width="2"/>
+  <text x="80" y="105" font-family="Arial" font-size="12" fill="#ccc" text-anchor="middle">Python Obj</text>
+  
+  <path d="M130 100 L170 100" stroke="#666" stroke-width="2" marker-end="url(#arrow)"/>
+  
+  <rect x="170" y="80" width="100" height="40" rx="5" fill="#2d2d2d" stroke="#dea584" stroke-width="2"/>
+  <text x="220" y="105" font-family="Arial" font-size="12" fill="#ccc" text-anchor="middle">MsgPack</text>
+  
+  <path d="M270 100 L310 100" stroke="#666" stroke-width="2" marker-end="url(#arrow)"/>
+  
+  <rect x="310" y="80" width="100" height="40" rx="5" fill="#2d2d2d" stroke="#27ae60" stroke-width="2"/>
+  <text x="360" y="105" font-family="Arial" font-size="12" fill="#ccc" text-anchor="middle">LZ4</text>
+  
+  <path d="M410 100 L450 100" stroke="#666" stroke-width="2" marker-end="url(#arrow)"/>
+  
+  <rect x="450" y="80" width="120" height="40" rx="5" fill="#2d2d2d" stroke="#c0392b" stroke-width="2"/>
+  <text x="510" y="105" font-family="Arial" font-size="12" fill="#ccc" text-anchor="middle">Storage (LMDB)</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="0" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#666" />
+    </marker>
+  </defs>
+</svg>

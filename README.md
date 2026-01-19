@@ -1,9 +1,17 @@
 # 🐾 Zoocache
 
-**Cache that invalidates when your data changes, not when a timer expires.**
+**Semantic caching for Python. Invalidate when your data changes, not when a timer expires.**
+
+Zoocache is a high-performance caching library with a Rust core, designed for applications where data consistency and read performance are critical.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
+---
+
+## The Core Concept
+
+Traditional caching relies on TTL (Time-To-Live). Zoocache flips this: **readers declare dependencies, writers signal changes.**
 
 ```python
 from zoocache import cacheable, invalidate
@@ -14,16 +22,47 @@ def get_user(user_id: int):
 
 def update_user(user_id: int, data: dict):
     db.save(user_id, data)
-    invalidate(f"user:{user_id}")  # Cache dies instantly
+    invalidate(f"user:{user_id}")  # All cached 'get_user' calls for this ID die instantly
 ```
 
 ---
 
-## The Problem
+## 📖 Documentation
 
-TTL-based caching is a guess. You set `ttl=300` and hope your data doesn't change in 5 minutes. When it does, users see stale data. When it doesn't, you're making unnecessary queries.
+For a deep dive into how Zoocache works and why it was built this way, please refer to our detailed documentation:
 
-**Zoocache flips this**: readers declare what they depend on, writers signal what changed. The cache handles the rest.
+- [**Architecture Overview**](docs/architecture.md): How the Rust core and Python wrapper interact.
+- [**Hierarchical Invalidation**](docs/invalidation.md): Deep dive into the PrefixTrie and O(D) invalidation.
+- [**Serialization Pipeline**](docs/serialization.md): How we use MsgPack and LZ4 for maximum performance.
+- [**Concurrency & SingleFlight**](docs/concurrency.md): Protection against the thundering herd.
+- [**Distributed Consistency**](docs/consistency.md): [HLC](docs/consistency.md#hybrid-logical-clocks-hlc), Redis Bus, and Self-Healing mechanisms.
+
+---
+
+## Comparison
+
+| Feature | **🐹 Zoocache** | **🔴 Redis (Raw)** | **🐶 Dogpile** | **diskcache** |
+| :--- | :--- | :--- | :--- | :--- |
+| **Invalidation** | 🧠 **Semantic (Trie)** | 🔧 Manual | 🔧 Manual | ⏳ TTL |
+| **Consistency** | 🛡️ **Causal (HLC)** | ❌ Eventual | ❌ No | ❌ No |
+| **Anti-Avalanche** | ✅ **Native** | ❌ No | ✅ Yes (Locks) | ❌ No |
+| **Performance** | 🚀 **Very High** | 🏎️ High | 🐢 Medium | 🐢 Medium |
+| **Usage (DX)** | 😍 **Simple** | 😓 Low Level | 😖 Complex | 🙂 Good |
+
+---
+
+## When to Use Zoocache
+
+### ✅ Good Fit
+- **Complex Data Relationships:** e.g., "Invalidate all products in this category".
+- **High Read/Write Ratio:** Where TTL causes stale data or unnecessary churn.
+- **Distributed Systems:** Using Redis backend + Pub/Sub invalidation.
+- **Strict Consistency:** When users must see updates immediately (pricing, inventory).
+
+### ❌ Not Ideal
+- **Pure Time-Based Expiry:** Session tokens or rate limits.
+- **Simple Key-Value:** If you don't need dependencies, standard `redis-py` is enough.
+- **Small, Local-only Apps:** If you don't need the performance of a Rust core, simpler Python-only libraries might suffice.
 
 ---
 
@@ -32,167 +71,6 @@ TTL-based caching is a guess. You set `ttl=300` and hope your data doesn't chang
 ```bash
 pip install zoocache
 ```
-
----
-
-## Quick Start
-
-### 1. Cache with Dependencies
-
-```python
-from zoocache import cacheable
-
-@cacheable(deps=lambda order_id: [f"order:{order_id}"])
-def get_order(order_id: int):
-    return db.query("SELECT * FROM orders WHERE id = ?", order_id)
-
-@cacheable(deps=["orders:list"])
-def list_orders():
-    return db.query("SELECT * FROM orders LIMIT 100")
-```
-
-### 2. Invalidate on Write
-
-```python
-from zoocache import invalidate
-
-def ship_order(order_id: int):
-    db.execute("UPDATE orders SET status='shipped' WHERE id = ?", order_id)
-    invalidate(f"order:{order_id}")
-    invalidate("orders:list")
-```
-
-### 3. Hierarchical Invalidation
-
-Dependencies form a tree. Invalidating a parent kills all children:
-
-```python
-# Cache depends on a specific user in an org
-@cacheable(deps=["org:acme:user:42"])
-def get_user_data():
-    return fetch_user()
-
-# Invalidate just this user
-invalidate("org:acme:user:42")
-
-# Or nuke the entire org
-invalidate("org:acme")  # Kills everything under org:acme
-```
-
-### 4. Dynamic Dependencies
-
-When you don't know all dependencies upfront:
-
-```python
-from zoocache import cacheable, add_deps
-
-@cacheable(deps=lambda user_id: [f"user:{user_id}"])
-def get_user_with_orders(user_id):
-    user = db.get_user(user_id)
-    orders = db.get_orders(user_id)
-    
-    for order in orders:
-        add_deps([f"order:{order['id']}"])
-    
-    return {"user": user, "orders": orders}
-```
-
-### 5. Async Support
-
-Works out of the box:
-
-```python
-@cacheable(deps=["data"])
-async def fetch_data():
-    return await async_db.query("...")
-```
-
----
-
-## Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **Semantic Invalidation** | Cache dies when data changes, not when time passes |
-| **Hierarchical Tags** | `invalidate("org:1")` kills `org:1:user:*`, `org:1:orders:*`, etc. |
-| **Thundering Herd Protection** | 100 concurrent requests = 1 execution, 99 wait |
-| **Rust Core** | Sub-microsecond overhead, zero-copy storage |
-| **Async Native** | sync and async functions just work |
-| **Zero Config** | No Redis, no setup, just decorate |
-
----
-
-## How It Works
-
-Zoocache uses a **PrefixTrie** with version numbers at each node:
-
-```
-root (v0)
-└── org (v0)
-    └── acme (v2)      ← invalidate("org:acme") bumps this
-        └── user (v0)
-            └── 42 (v5) ← invalidate("org:acme:user:42") bumps this
-```
-
-When you read from cache, Zoocache snapshots the versions along the path. On cache hit, it compares current versions vs snapshot. If any node was bumped → cache miss.
-
-**Result**: O(depth) invalidation regardless of how many entries are affected.
-
----
-
-## When to Use Zoocache
-
-✅ **Good fit:**
-- Data changes on events (user updates, webhooks, writes)
-- Multi-tenant apps where you need per-tenant invalidation
-- Complex data relationships (orders → products → inventory)
-- High read/write ratio where TTL causes either stale data or cache churn
-- **Distributed systems** (using Redis storage + Pub/Sub invalidation)
-
-❌ **Not ideal:**
-- Data that genuinely expires by time (session tokens, rate limits)
-
----
-
-## API Reference
-
-```python
-from zoocache import cacheable, invalidate, add_deps, clear
-
-@cacheable(namespace="optional", deps=["tag"] or lambda *args: ["tag"])
-def my_func(): ...
-
-invalidate("tag")           # Invalidate tag and all children
-add_deps(["tag1", "tag2"])  # Add deps during execution
-clear()                     # Reset everything
-```
-
----
-
-## Dependency Naming Convention
-
-```
-{entity}:{id}[:{sub-entity}:{id}]...
-```
-
-Examples:
-```python
-"user:123"                  # Single entity
-"user:123:profile"          # Sub-resource
-"tenant:acme:user:123"      # Multi-tenant
-"orders:list"               # Collections
-```
-
----
-
-## Roadmap
-
-- [ ] Prometheus metrics
-- [ ] Prometheus metrics
-- [ ] Django / SQLAlchemy plugins
-- [ ] Dependency propagation for nested `@cacheable`
-
----
 
 ## License
 
