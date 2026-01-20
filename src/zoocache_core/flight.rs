@@ -14,6 +14,7 @@ pub(crate) enum FlightStatus {
 pub(crate) struct Flight {
     pub state: Mutex<(FlightStatus, Option<Py<PyAny>>)>,
     pub condvar: Condvar,
+    pub py_future: Mutex<Option<Py<PyAny>>>,
 }
 
 #[inline]
@@ -31,6 +32,7 @@ pub(crate) fn try_enter_flight(
         Arc::new(Flight {
             state: Mutex::new((FlightStatus::Pending, None)),
             condvar: Condvar::new(),
+            py_future: Mutex::new(None),
         })
     });
     (Arc::clone(flight.value()), is_leader)
@@ -41,13 +43,15 @@ pub(crate) fn complete_flight(
     key: &str,
     is_error: bool,
     value: Option<Py<PyAny>>,
-) {
+) -> Option<Py<PyAny>> {
     if let Some((_, flight)) = flights.remove(key) {
         let mut state = flight.state.lock().unwrap();
         state.0 = if is_error { FlightStatus::Error } else { FlightStatus::Done };
         state.1 = value;
         flight.condvar.notify_all();
+        return flight.py_future.lock().unwrap().take();
     }
+    None
 }
 
 pub(crate) fn wait_for_flight(flight: &Flight) -> FlightStatus {

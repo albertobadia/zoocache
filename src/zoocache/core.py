@@ -67,42 +67,6 @@ def prune(max_age_secs: int = 3600) -> None:
     _get_core().prune(max_age_secs)
 
 
-class AsyncSingleFlight:
-    def __init__(self):
-        self._futures: Dict[str, asyncio.Future] = {}
-        self._lock = asyncio.Lock()
-
-    async def flight(self, key: str, coro_func: Callable):
-        async with self._lock:
-            if key in self._futures:
-                fut = self._futures[key]
-                is_leader = False
-            else:
-                # Double check cache inside lock to avoid post-flight race
-                if (val := _get_core().get(key)) is not None:
-                    return val
-                fut = self._futures[key] = asyncio.get_running_loop().create_future()
-                is_leader = True
-
-        if is_leader:
-            try:
-                res = await coro_func()
-                self._finish(key, res)
-                return res
-            except Exception as e:
-                self._finish(key, None, exc=e)
-                raise
-        return await fut
-
-    def _finish(self, key: str, result: Any, exc: Optional[Exception] = None):
-        fut = self._futures.pop(key, None)
-        if fut and not fut.done():
-            fut.set_exception(exc) if exc else fut.set_result(result)
-
-
-_async_flight = AsyncSingleFlight()
-
-
 def _generate_key(
     func: Callable, namespace: Optional[str], args: tuple, kwargs: dict
 ) -> str:
@@ -135,9 +99,29 @@ def cacheable(
         async def async_wrapper(*args, **kwargs):
             key = _generate_key(func, namespace, args, kwargs)
             _maybe_prune()
-            if (val := _get_core().get(key)) is not None:
+
+            val, is_leader, fut = _get_core().get_or_entry_async(key)
+            if val is not None:
                 return val
-            return await _async_flight.flight(key, lambda: execute(key, args, kwargs))
+
+            if is_leader:
+                leader_fut = asyncio.get_running_loop().create_future()
+                _get_core().register_flight_future(key, leader_fut)
+                try:
+                    res = await execute(key, args, kwargs)
+                    _get_core().finish_flight(key, False, res)
+                    leader_fut.set_result(res)
+                    return res
+                except Exception as e:
+                    _get_core().finish_flight(key, True, None)
+                    leader_fut.set_exception(e)
+                    raise
+
+            if fut is not None:
+                return await fut
+
+            # Fallback if flight was already finished before we could wait
+            return await execute(key, args, kwargs)
 
         async def execute(key, args, kwargs):
             with DepsTracker():

@@ -137,9 +137,33 @@ impl Core {
         }
     }
 
+    #[allow(clippy::type_complexity)]
+    fn get_or_entry_async(&self, py: Python, key: &str) -> PyResult<(Option<Py<PyAny>>, bool, Option<Py<PyAny>>)> {
+        if let Some(res) = self.get(py, key)? {
+            return Ok((Some(res), false, None));
+        }
+
+        let (flight, is_leader) = try_enter_flight(&self.flights, key);
+
+        if is_leader {
+            return Ok((None, true, None));
+        }
+
+        // Return the existing future if it exists
+        let fut = flight.py_future.lock().unwrap().as_ref().map(|f| f.clone_ref(py));
+        Ok((None, false, fut))
+    }
+
+    fn register_flight_future(&self, key: &str, future: Py<PyAny>) {
+        if let Some(flight) = self.flights.get(key) {
+            let mut fut_guard = flight.py_future.lock().unwrap();
+            *fut_guard = Some(future);
+        }
+    }
+
     #[pyo3(signature = (key, is_error, value=None))]
-    fn finish_flight(&self, py: Python, key: &str, is_error: bool, value: Option<Py<PyAny>>) {
-        py.detach(|| complete_flight(&self.flights, key, is_error, value));
+    fn finish_flight(&self, py: Python, key: &str, is_error: bool, value: Option<Py<PyAny>>) -> Option<Py<PyAny>> {
+        py.detach(|| complete_flight(&self.flights, key, is_error, value))
     }
 
     fn get(&self, py: Python, key: &str) -> PyResult<Option<Py<PyAny>>> {
