@@ -1,0 +1,43 @@
+<svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .logo-text { font-family: 'Segoe UI', 'Roboto', sans-serif; font-weight: 800; letter-spacing: -1px; }
+    .slogan-text { font-family: 'Segoe UI', 'Roboto', sans-serif; font-weight: 500; text-transform: uppercase; letter-spacing: 2px; }
+  </style>
+
+  <defs>
+    <linearGradient id="sunsetSky" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FF5722" />
+      <stop offset="60%" stop-color="#FFC107" />
+      <stop offset="100%" stop-color="#FFF8E1" />
+    </linearGradient>
+
+    <linearGradient id="treeOrange" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#D84315" />
+      <stop offset="50%" stop-color="#EF6C00" />
+      <stop offset="100%" stop-color="#FF9800" />
+    </linearGradient>
+  </defs>
+
+  <circle cx="400" cy="200" r="160" fill="url(#sunsetSky)" opacity="0.9" />
+
+  <!-- Geometric Paw Print (Zoo + Cache Blocks) -->
+  <!-- Organic-Geometric Paw Print -->
+  <g transform="translate(400, 200)" fill="url(#treeOrange)" opacity="0.95">
+    <!-- Main Pad: Stylized Heart/Bean shape -->
+    <path d="M-65 40 Q-70 10 -40 -10 Q0 -30 40 -10 Q70 10 65 40 Q60 80 0 85 Q-60 80 -65 40 Z" />
+    <!-- Toe Pads: Elliptical Cache Blocks -->
+    <ellipse cx="-75" cy="-45" rx="22" ry="30" transform="rotate(-25, -75, -45)" />
+    <ellipse cx="-25" cy="-75" rx="22" ry="32" transform="rotate(-5, -25, -75)" />
+    <ellipse cx="25" cy="-75" rx="22" ry="32" transform="rotate(5, 25, -75)" />
+    <ellipse cx="75" cy="-45" rx="22" ry="30" transform="rotate(25, 75, -45)" />
+  </g>
+
+  <!-- Text Section (LIGHT MODE COLORS) -->
+  <g text-anchor="middle">
+    <!-- Main Title: Dark Brown -->
+    <text x="400" y="450" class="logo-text" font-size="85" fill="#3E2723">ZooCache</text>
+    
+    <!-- Slogan: Deep Brown -->
+    <text x="400" y="485" class="slogan-text" font-size="20" fill="#4E342E">Remember when it makes sense, bring it fast</text>
+  </g>
+</svg>

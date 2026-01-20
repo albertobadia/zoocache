@@ -29,7 +29,9 @@ pub(crate) struct CacheEntry {
 
 impl CacheEntry {
     pub fn serialize(&self, py: Python) -> PyResult<Vec<u8>> {
-        // 1. Convert Python object to a serializable Value via depythonize (fallback due to pythonize limitations)
+        // 1. Convert Python object to a serializable Value via depythonize
+        // We use serde_json::Value as an intermediate representation because it's
+        // a well-supported bridge type, though we still bypass the actual JSON stringify.
         let serde_val: serde_json::Value = pythonize::depythonize(self.value.bind(py))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
@@ -39,7 +41,7 @@ impl CacheEntry {
             dependencies: self.dependencies.clone(),
         };
 
-        // 2. Serialize metadata and compressed-value to high-level MsgPack
+        // 2. Serialize metadata and the already-msgpacked value to final MsgPack
         let packed = rmp_serde::to_vec(&entry)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
