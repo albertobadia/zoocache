@@ -20,11 +20,13 @@ struct SerializableCacheEntry {
     #[serde(with = "serde_bytes")]
     value: Vec<u8>, // Internal MsgPack for the value
     dependencies: HashMap<String, DepSnapshot>,
+    trie_version: u64,
 }
 
 pub(crate) struct CacheEntry {
     pub value: Py<PyAny>,
     pub dependencies: HashMap<String, DepSnapshot>,
+    pub trie_version: u64,
 }
 
 impl CacheEntry {
@@ -39,6 +41,7 @@ impl CacheEntry {
             value: rmp_serde::to_vec(&serde_val)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?,
             dependencies: self.dependencies.clone(),
+            trie_version: self.trie_version,
         };
 
         // 2. Serialize metadata and the already-msgpacked value to final MsgPack
@@ -68,6 +71,7 @@ impl CacheEntry {
         Ok(Self {
             value: py_val.into(),
             dependencies: entry.dependencies,
+            trie_version: entry.trie_version,
         })
     }
 }

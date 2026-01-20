@@ -25,17 +25,20 @@ impl TrieNode {
 #[derive(Clone)]
 pub(crate) struct PrefixTrie {
     root: Arc<TrieNode>,
+    global_version: Arc<AtomicU64>,
 }
 
 impl PrefixTrie {
     pub fn new() -> Self {
         Self {
             root: Arc::new(TrieNode::default()),
+            global_version: Arc::new(AtomicU64::new(0)),
         }
     }
 
     #[inline]
     pub fn invalidate(&self, tag: &str) -> u64 {
+        self.global_version.fetch_add(1, Ordering::SeqCst);
         let mut current = Arc::clone(&self.root);
         current.touch();
         for part in tag.split(':') {
@@ -66,6 +69,7 @@ impl PrefixTrie {
 
     #[inline]
     pub fn set_min_version(&self, tag: &str, version: u64) {
+        self.global_version.fetch_add(1, Ordering::SeqCst);
         let mut current = Arc::clone(&self.root);
         current.touch();
         for part in tag.split(':') {
@@ -159,9 +163,15 @@ impl PrefixTrie {
         *versions.last().unwrap_or(&0)
     }
 
+    #[inline]
+    pub fn get_global_version(&self) -> u64 {
+        self.global_version.load(Ordering::SeqCst)
+    }
+
     pub fn clear(&self) {
         self.root.children.clear();
         self.root.version.store(0, Ordering::SeqCst);
+        self.global_version.fetch_add(1, Ordering::SeqCst);
         self.root.touch();
     }
 

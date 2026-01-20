@@ -175,6 +175,11 @@ impl Core {
             None => return Ok(None),
         };
 
+        // Short-circuit: O(1) validation if no invalidations occurred globally
+        if entry.trie_version == self.trie.get_global_version() {
+            return Ok(Some(entry.value.clone_ref(py)));
+        }
+
         let valid = py.detach(|| validate_dependencies(&self.trie, &entry.dependencies));
         if !valid {
             let storage = Arc::clone(&self.storage);
@@ -192,10 +197,12 @@ impl Core {
 
     #[pyo3(signature = (key, value, dependencies, ttl=None))]
     fn set(&self, py: Python, key: String, value: Py<PyAny>, dependencies: Vec<String>, ttl: Option<u64>) {
+        let trie_version = self.trie.get_global_version();
         let snapshots = py.detach(|| build_dependency_snapshots(&self.trie, dependencies));
         let entry = Arc::new(CacheEntry {
             value,
             dependencies: snapshots,
+            trie_version,
         });
         let storage = Arc::clone(&self.storage);
         let final_ttl = ttl.or(self.default_ttl);
