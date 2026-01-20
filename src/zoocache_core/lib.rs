@@ -252,11 +252,12 @@ impl Core {
 #[pyfunction]
 #[pyo3(signature = (obj, prefix=None))]
 fn hash_key(_py: Python<'_>, obj: Bound<'_, PyAny>, prefix: Option<&str>) -> PyResult<String> {
-    let serde_val: serde_json::Value = pythonize::depythonize(&obj)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
+    let mut data = Vec::new();
+    let mut serializer = rmp_serde::Serializer::new(&mut data);
+    let mut depythonizer = pythonize::Depythonizer::from_object(&obj);
     
-    let data = rmp_serde::to_vec(&serde_val)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+    serde_transcode::transcode(&mut depythonizer, &mut serializer)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
     let mut hasher = Sha256::new();
     hasher.update(&data);
