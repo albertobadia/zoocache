@@ -1,6 +1,6 @@
 [project]
 name = "zoocache"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Cache that invalidates when your data changes, not when a timer expires. Rust-powered semantic invalidation for Python."
 readme = "README.md"
 license = { text = "MIT" }

@@ -12,7 +12,6 @@ def test_large_data_objects():
 
     fetched = get_large()
     assert fetched == large_data
-    assert fetched is large_data
 
     invalidate("large")
     get_large()

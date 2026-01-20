@@ -25,6 +25,7 @@ struct Core {
     trie: PrefixTrie,
     flights: DashMap<String, Arc<Flight>>,
     default_ttl: Option<u64>,
+    max_entries: Option<usize>,
     #[allow(dead_code)]
     read_extend_ttl: bool,
     tti_tx: Option<Sender<(String, u64)>>,
@@ -33,8 +34,8 @@ struct Core {
 #[pymethods]
 impl Core {
     #[new]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true))]
-    fn new(storage_url: Option<&str>, bus_url: Option<&str>, prefix: Option<&str>, default_ttl: Option<u64>, read_extend_ttl: bool) -> PyResult<Self> {
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None))]
+    fn new(storage_url: Option<&str>, bus_url: Option<&str>, prefix: Option<&str>, default_ttl: Option<u64>, read_extend_ttl: bool, max_entries: Option<usize>) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => Arc::new(
                 RedisStorage::new(url, prefix)
@@ -105,6 +106,7 @@ impl Core {
             trie,
             flights: DashMap::new(),
             default_ttl,
+            max_entries,
             read_extend_ttl,
             tti_tx,
         })
@@ -173,7 +175,19 @@ impl Core {
         });
         let storage = Arc::clone(&self.storage);
         let final_ttl = ttl.or(self.default_ttl);
-        py.detach(|| storage.set(key, entry, final_ttl));
+        
+        py.detach(|| {
+            storage.set(key, entry, final_ttl);
+            
+            if let Some(max) = self.max_entries {
+                let current = storage.len();
+                if current > max {
+                    let to_evict = current - max + (max / 10).max(1);
+                    storage.evict_lru(to_evict);
+                    self.trie.prune(0);
+                }
+            }
+        });
     }
 
     fn invalidate(&self, py: Python, tag: &str) {

@@ -26,17 +26,8 @@ def configure(
     prune_after: Optional[int] = None,
     default_ttl: Optional[int] = None,
     read_extend_ttl: bool = True,
+    max_entries: Optional[int] = None,
 ) -> None:
-    """
-    Configure the global zoocache instance.
-
-    :param storage_url: URL for storage. redis://host:port or lmdb://path
-    :param bus_url: URL for invalidation bus. redis://host:port
-    :param prefix: Optional prefix for keys and bus channels.
-    :param prune_after: Automatically prune Trie nodes unused for this many seconds.
-    :param default_ttl: Default security TTL/TTI in seconds for all entries.
-    :param read_extend_ttl: If True (default), reading an entry extends its TTL (TTI). If False, TTL is fixed.
-    """
     global _core, _config
     if _core is not None:
         raise RuntimeError(
@@ -49,6 +40,7 @@ def configure(
         "prune_after": prune_after,
         "default_ttl": default_ttl,
         "read_extend_ttl": read_extend_ttl,
+        "max_entries": max_entries,
     }
 
 

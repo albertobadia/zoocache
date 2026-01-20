@@ -76,4 +76,6 @@ pub(crate) trait Storage: Send + Sync {
     fn touch(&self, key: &str, ttl: u64);
     fn remove(&self, key: &str);
     fn clear(&self);
+    fn len(&self) -> usize;
+    fn evict_lru(&self, count: usize) -> Vec<String>;
 }
