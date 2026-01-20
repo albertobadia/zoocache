@@ -1,20 +1,24 @@
 use redis::{Client, Commands};
 use std::sync::Arc;
 use std::thread;
+use r2d2::Pool;
 
 use super::InvalidateBus;
 
 pub(crate) struct RedisPubSubBus {
-    client: Client,
+    pool: Pool<Client>,
     channel: String,
 }
 
 impl RedisPubSubBus {
     pub fn new(url: &str, channel: Option<&str>) -> Result<Self, redis::RedisError> {
         let client = Client::open(url)?;
-        client.get_connection()?;
+        let pool = Pool::builder()
+            .build(client)
+            .map_err(|e| redis::RedisError::from(std::io::Error::other(e)))?;
+
         Ok(Self {
-            client,
+            pool,
             channel: channel.unwrap_or("zoocache:invalidate").to_string(),
         })
     }
@@ -23,18 +27,18 @@ impl RedisPubSubBus {
     where
         F: Fn(&str, u64) + Send + Sync + 'static,
     {
-        let client = self.client.clone();
+        let pool = self.pool.clone();
         let channel = self.channel.clone();
 
         thread::spawn(move || {
             let mut backoff_ms = 100;
             loop {
-                let conn_res = client.get_connection();
+                let conn_res = pool.get();
                 
                 let mut conn = match conn_res {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("[zoocache] Bus connection failed: {}. Retrying in {}ms...", e, backoff_ms);
+                        eprintln!("[zoocache] Bus listener connection failed: {}. Retrying in {}ms...", e, backoff_ms);
                         thread::sleep(std::time::Duration::from_millis(backoff_ms));
                         backoff_ms = (backoff_ms * 2).min(5000);
                         continue;
@@ -70,7 +74,7 @@ impl RedisPubSubBus {
 
 impl InvalidateBus for RedisPubSubBus {
     fn publish(&self, tag: &str, version: u64) {
-        if let Ok(mut conn) = self.client.get_connection() {
+        if let Ok(mut conn) = self.pool.get() {
             let payload = format!("{}|{}", tag, version);
             let _: Result<(), _> = conn.publish(&self.channel, payload);
         }
