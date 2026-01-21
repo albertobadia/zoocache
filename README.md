@@ -15,12 +15,12 @@
 
 </div>
 <p align="center">
-  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
-  <img alt="PyPI" src="https://img.shields.io/pypi/v/zoocache">
-  <img alt="Downloads" src="https://img.shields.io/pypi/dm/zoocache">
-  <a href="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://zoocache.readthedocs.io/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/zoocache"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square&logo=python"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square"></a>
+  <a href="https://pypi.org/project/zoocache/"><img alt="PyPI" src="https://img.shields.io/pypi/v/zoocache?style=flat-square&logo=pypi&logoColor=white"></a>
+  <a href="https://pypi.org/project/zoocache/"><img alt="Downloads" src="https://img.shields.io/pepy/dt/zoocache?style=flat-square&color=blue"></a>
+  <a href="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/albertobadia/zoocache/ci.yml?branch=main&style=flat-square&logo=github"></a>
+  <a href="https://zoocache.readthedocs.io/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/zoocache?style=flat-square&logo=readthedocs"></a>
 </p>
 
 ---
