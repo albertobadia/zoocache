@@ -9,6 +9,11 @@
 <p align="center">
   Zoocache is a high-performance caching library with a Rust core, designed for applications where data consistency and read performance are critical.
 </p>
+<div align="center" markdown="1">
+
+[**📖 Read the User Guide**](docs/user_guide.md)
+
+</div>
 <p align="center">
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
@@ -124,4 +129,4 @@ Explore the deep dives into Zoocache's architecture and features:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/albertobadia/zoocache/blob/main/LICENSE) file for details.
