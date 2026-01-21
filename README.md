@@ -14,6 +14,8 @@
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
   <img alt="PyPI" src="https://img.shields.io/pypi/v/zoocache">
   <img alt="Downloads" src="https://img.shields.io/pypi/dm/zoocache">
+  <a href="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://zoocache.readthedocs.io/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/zoocache"></a>
 </p>
 
 ---

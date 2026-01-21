@@ -21,3 +21,7 @@ target/
 
 # LMDB files
 *.mdb
+
+
+# Docs files
+site/

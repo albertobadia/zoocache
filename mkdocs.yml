@@ -1,0 +1,63 @@
+site_name: ZooCache
+site_description: ZooCache is a high-performance caching library with a Rust core, designed for consistency and read performance.
+site_url: https://zoocache.readthedocs.io/
+
+theme:
+  name: material
+  logo: assets/logo-light.svg
+  favicon: assets/favicon.svg
+  features:
+    - navigation.indexes
+    - navigation.expand
+    - content.code.copy
+  palette:
+    # Light mode
+    - scheme: default
+      primary: orange
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    # Dark mode
+    - scheme: slate
+      primary: orange
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings
+  - include-markdown
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - User Guide: user_guide.md
+  - Architecture: architecture.md
+  - Serialization: serialization.md
+  - Reliability: reliability.md
+  - Invalidation: invalidation.md
+  - Consistency: consistency.md
+  - Concurrency: concurrency.md
+  - Architectural Decisions:
+      - "ADR 0001: Prefix-Trie Invalidation": adr/0001-prefix-trie-invalidation.md
+      - "ADR 0002: Rust Core Python Wrapper": adr/0002-rust-core-python-wrapper.md
+      - "ADR 0003: HLC Distributed Consistency": adr/0003-hlc-distributed-consistency.md
+      - "ADR 0004: Serialization Strategy": adr/0004-serialization-strategy.md
+      - "ADR 0005: Singleflight Pattern": adr/0005-singleflight-pattern.md
+      - "ADR 0006: Trie Performance Optimizations": adr/0006-trie-performance-optimizations.md
+      - "ADR 0007: Zero-Bridge Serialization": adr/0007-zero-bridge-serialization.md
+      - "ADR 0008: Redis Bus Connection Pooling": adr/0008-redis-bus-connection-pooling.md
