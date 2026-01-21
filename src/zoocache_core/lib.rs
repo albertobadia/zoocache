@@ -175,8 +175,10 @@ impl Core {
             None => return Ok(None),
         };
 
+        let global_version = self.trie.get_global_version();
+
         // Short-circuit: O(1) validation if no invalidations occurred globally
-        if entry.trie_version == self.trie.get_global_version() {
+        if entry.trie_version == global_version {
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
@@ -185,6 +187,20 @@ impl Core {
             let storage = Arc::clone(&self.storage);
             py.detach(|| storage.remove(key));
             return Ok(None);
+        }
+
+        // Lazy Update: Re-stamp the entry with the current global version
+        // so that the next hit can use the O(1) short-circuit.
+        let current_global_version = self.trie.get_global_version();
+        if entry.trie_version < current_global_version {
+            let storage = Arc::clone(&self.storage);
+            let updated_entry = Arc::new(crate::storage::CacheEntry {
+                value: entry.value.clone_ref(py),
+                dependencies: entry.dependencies.clone(),
+                trie_version: current_global_version,
+            });
+            let key_str = key.to_string();
+            py.detach(move || storage.set(key_str, updated_entry, None));
         }
 
         // TTI: Deferred refresh
