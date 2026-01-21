@@ -13,14 +13,12 @@ We use MessagePack as the intermediate representation. It is more compact than J
 Before writing to the storage backend (LMDB, Redis, or RAM), data is compressed using LZ4. 
 - **Why LZ4?**: It offers a very high decompression speed, which is critical for cache performance, while still providing decent compression ratios for JSON-like data.
 
-### 3. `serde-transcode` Optimization
-When reading from the cache, we use a technique called **streaming transcoding**. Instead of:
-`Bytes -> MsgPack Value -> Rust Struct -> Python Object`
+### 3. "Zero-Bridge" Transcoding
+To minimize FFI overhead, we use direct streaming transcoding:
+- **Write**: `Python Object -> Depythonizer -> Transcoder -> MsgPack Serializer -> Bytes`
+- **Read**: `Bytes -> MsgPack Deserializer -> Transcoder -> pythonize -> Python Object`
 
-We do:
-`Bytes -> Deserializer -> pythonize (via Transcoder) -> Python Object`
-
-This avoids allocating temporary Rust structures for the cached data, significantly reducing the overhead of the FFI boundary.
+This completely eliminates intermediate `serde_json::Value` or manual Rust struct allocations, making the Python-Rust boundary near-zero cost.
 
 ## Trade-offs & Considerations
 - **Compatibility**: We use `pythonize/depythonize`, which handles most standard Python types (dicts, lists, int, str, float, bool). However, custom classes or complex objects that aren't JSON-serializable might require custom handlers or won't work out of the box.

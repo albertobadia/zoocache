@@ -33,15 +33,23 @@ For TTI (Time-To-Idle), the cache must update the "expiration" time on every rea
 - **De-bouncing**: The background worker keeps track of recently "touched" keys. It will only perform a real write to the storage (Redis or LMDB) if the key hasn't been touched in the last 60 seconds.
 - This results in a massive performance gain for hot keys while still maintaining the TTI guarantee.
 
+## 4. Connection Stability (Redis Pooling)
+In distributed environments, high-frequency invalidations can stress the network and the Redis server.
+
+### The Protection: r2d2 Connection Pooling
+- Zoocache implements an internal connection pool (**ADR 0008**) for the Redis Bus.
+- Instead of opening a new socket for every invalidation, connections are recycled.
+- This prevents TCP port exhaustion and provides robust reconnection logic with exponential backoff.
+
 ## 4. Distributed Reliability (Passive Resync)
 
 In distributed mode, the **Redis Pub/Sub Bus** is the primary way to announce invalidations. However, Pub/Sub is "fire and forget" and messages can be lost.
 
-### The Protection: Metadata Self-Healing
 Every entry stored in the cache includes a full snapshot of the versions of its dependencies at the time of creation.
 - When an entry is read, Zoocache compares its metadata with the local Trie.
+- **Lazy Update (Self-Healing)**: If the local metadata matches but the global Trie version has changed, the entry is validated. If successful, the entry's version is updated in storage (**ADR 0006**).
 - If the metadata shows **newer** versions than the local Trie, the node realizes it's behind and **catches up automatically** (Ratchet).
-- This ensures that missing a Pub/Sub message only results in temporary eventual consistency, but reading any fresh data "repairs" the local node.
+- This ensures that missing a Pub/Sub message only results in temporary eventual consistency, but reading any fresh data "repairs" the local node and restores peak $O(1)$ performance.
 
 ## Trade-offs & Considerations
 - **Follower Cancellation**: Currently, if a follower's request is cancelled (e.g., HTTP client disconnects), the leader continues its work to ensure the cache eventually gets populated for others.

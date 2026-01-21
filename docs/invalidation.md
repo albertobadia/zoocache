@@ -19,7 +19,8 @@ In the diagram above, if we invalidate `org:acme`, we bump its version. Any cach
 
 ## Performance Characteristics
 - **Invalidation**: $O(D)$ where $D$ is the depth of the tag (number of colons). It is independent of the number of entries in the cache.
-- **Validation**: $O(D)$ for each dependency assigned to the entry.
+- **Validation**: $O(1)$ in the common case (via **Global Version Short-circuit**) and $O(D \times N)$ in the worst case (where $N$ is the number of dependencies).
+- **Self-Healing**: $O(1)$ performance is automatically restored after the first validation hit following a change (**Lazy Update**).
 
 ## Trade-offs & Considerations
 - **Tag Structure**: Dependencies must be hierarchical. If you have non-hierarchical relationships, they must be represented as multiple separate tags.

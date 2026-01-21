@@ -8,8 +8,8 @@ The system is split into two main layers:
 
 ### 1. The Plano de Control (Rust Core)
 The Rust engine manages the complex logic of the cache:
-- **PrefixTrie**: A thread-safe, hierarchical structure that tracks versioning for dependency tags.
-- **Flight Manager**: Handles synchronization to prevent "thundering herd" scenarios.
+- **PrefixTrie**: A thread-safe, hierarchical structure that tracks versioning for dependency tags. Includes a **Global Version Counter** for $O(1)$ validation short-circuiting.
+- **Flight Manager**: Handles synchronization to prevent "thundering herd" scenarios for both Sync and Async functions.
 - **[Hybrid Logical Clocks (HLC)](consistency.md#hybrid-logical-clocks-hlc)**: Ensures causal consistency across distributed nodes by ratcheting timestamps based on wall clocks and logical counters.
 
 ### 2. The Plano de Datos (Python Wrapper)
