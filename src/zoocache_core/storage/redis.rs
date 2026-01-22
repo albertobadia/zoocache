@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
+use r2d2::Pool;
 use redis::{Client, Commands};
 use std::sync::Arc;
-use r2d2::Pool;
 
 use super::{CacheEntry, Storage};
 
@@ -23,7 +23,7 @@ impl RedisStorage {
         let pool = Pool::builder()
             .build(client)
             .map_err(|e| redis::RedisError::from(std::io::Error::other(e)))?;
-            
+
         Ok(Self {
             pool,
             prefix: prefix.unwrap_or("zoocache").to_string(),
@@ -44,9 +44,7 @@ impl Storage for RedisStorage {
         let mut conn = self.pool.get().ok()?;
         let data: Vec<u8> = conn.get(self.full_key(key)).ok()?;
 
-        let result = Python::attach(|py| {
-            CacheEntry::deserialize(py, &data).ok().map(Arc::new)
-        });
+        let result = Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new));
 
         if result.is_some() {
             let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), key, now_secs() as f64);
@@ -140,9 +138,7 @@ impl Storage for RedisStorage {
             Err(_) => return vec![],
         };
 
-        let to_evict: Vec<String> = keys.into_iter()
-            .step_by(2)
-            .collect();
+        let to_evict: Vec<String> = keys.into_iter().step_by(2).collect();
 
         for key in &to_evict {
             let _: redis::RedisResult<()> = conn.del(self.full_key(key));
@@ -151,4 +147,3 @@ impl Storage for RedisStorage {
         to_evict
     }
 }
-

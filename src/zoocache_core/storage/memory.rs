@@ -17,7 +17,9 @@ pub(crate) struct InMemoryStorage {
 
 impl InMemoryStorage {
     pub fn new() -> Self {
-        Self { map: DashMap::new() }
+        Self {
+            map: DashMap::new(),
+        }
     }
 }
 
@@ -26,7 +28,7 @@ impl Storage for InMemoryStorage {
     fn get(&self, key: &str) -> Option<Arc<CacheEntry>> {
         let mut entry = self.map.get_mut(key)?;
         let (val, expires_at, last_accessed) = entry.value_mut();
-        
+
         if let Some(expires) = expires_at
             && now_secs() > *expires
         {
@@ -34,7 +36,7 @@ impl Storage for InMemoryStorage {
             self.map.remove(key);
             return None;
         }
-        
+
         *last_accessed = now_secs();
         Some(Arc::clone(val))
     }
@@ -68,23 +70,20 @@ impl Storage for InMemoryStorage {
     }
 
     fn evict_lru(&self, count: usize) -> Vec<String> {
-        let mut entries: Vec<(String, u64)> = self.map
+        let mut entries: Vec<(String, u64)> = self
+            .map
             .iter()
             .map(|e| (e.key().clone(), e.value().2))
             .collect();
-        
+
         entries.sort_by_key(|(_, ts)| *ts);
-        
-        let to_evict: Vec<String> = entries.into_iter()
-            .take(count)
-            .map(|(k, _)| k)
-            .collect();
-        
+
+        let to_evict: Vec<String> = entries.into_iter().take(count).map(|(k, _)| k).collect();
+
         for key in &to_evict {
             self.map.remove(key);
         }
-        
+
         to_evict
     }
 }
-

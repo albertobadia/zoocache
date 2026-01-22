@@ -46,7 +46,11 @@ pub(crate) fn complete_flight(
 ) -> Option<Py<PyAny>> {
     if let Some((_, flight)) = flights.remove(key) {
         let mut state = flight.state.lock().unwrap();
-        state.0 = if is_error { FlightStatus::Error } else { FlightStatus::Done };
+        state.0 = if is_error {
+            FlightStatus::Error
+        } else {
+            FlightStatus::Done
+        };
         state.1 = value;
         flight.condvar.notify_all();
         return flight.py_future.lock().unwrap().take();

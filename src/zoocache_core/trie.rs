@@ -1,8 +1,8 @@
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]
@@ -54,16 +54,19 @@ impl PrefixTrie {
             current = next;
             current.touch();
         }
-        
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        let prev = current.version.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-            Some(v.max(now).max(v + 1))
-        }).unwrap();
-        
+        let prev = current
+            .version
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                Some(v.max(now).max(v + 1))
+            })
+            .unwrap();
+
         prev.max(now).max(prev + 1)
     }
 
@@ -87,7 +90,6 @@ impl PrefixTrie {
         }
         current.version.fetch_max(version, Ordering::SeqCst);
     }
-
 
     pub fn get_path_versions<S: AsRef<str>>(&self, parts: &[S]) -> Vec<u64> {
         let mut versions = Vec::with_capacity(parts.len() + 1);
@@ -137,9 +139,11 @@ impl PrefixTrie {
     pub fn catch_up<S: AsRef<str>>(&self, parts: &[S], snapshot_versions: &[u64]) {
         let mut current = Arc::clone(&self.root);
         current.touch();
-        
+
         // Root version sync
-        current.version.fetch_max(snapshot_versions[0], Ordering::SeqCst);
+        current
+            .version
+            .fetch_max(snapshot_versions[0], Ordering::SeqCst);
 
         for (i, part) in parts.iter().enumerate() {
             let next = if let Some(n) = current.children.get(part.as_ref()) {
@@ -153,7 +157,9 @@ impl PrefixTrie {
             };
             current = next;
             current.touch();
-            current.version.fetch_max(snapshot_versions[i + 1], Ordering::SeqCst);
+            current
+                .version
+                .fetch_max(snapshot_versions[i + 1], Ordering::SeqCst);
         }
     }
 
@@ -180,22 +186,21 @@ impl PrefixTrie {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
-        self.root.children.retain(|_, child| {
-            !Self::prune_recursive(child, now, max_age_secs)
-        });
+
+        self.root
+            .children
+            .retain(|_, child| !Self::prune_recursive(child, now, max_age_secs));
     }
 
     fn prune_recursive(node: &Arc<TrieNode>, now: u64, max_age_secs: u64) -> bool {
         // Prune children first
-        node.children.retain(|_, child| {
-            !Self::prune_recursive(child, now, max_age_secs)
-        });
+        node.children
+            .retain(|_, child| !Self::prune_recursive(child, now, max_age_secs));
 
         // Current node is prunable if it's a leaf and it's old
         let last = node.last_accessed.load(Ordering::Relaxed);
         let age = now.saturating_sub(last);
-        
+
         node.children.is_empty() && age > max_age_secs
     }
 }
@@ -207,7 +212,10 @@ pub(crate) struct DepSnapshot {
 }
 
 #[inline]
-pub(crate) fn validate_dependencies(trie: &PrefixTrie, deps: &HashMap<String, DepSnapshot>) -> bool {
+pub(crate) fn validate_dependencies(
+    trie: &PrefixTrie,
+    deps: &HashMap<String, DepSnapshot>,
+) -> bool {
     for snapshot in deps.values() {
         // Passive sync: if we see a newer version in the snapshot, our local trie should catch up.
         // This makes the system self-healing if a pub/sub message was lost.
@@ -229,7 +237,13 @@ pub(crate) fn build_dependency_snapshots(
     for tag in dependencies {
         let parts: Vec<String> = tag.split(':').map(|s| s.to_string()).collect();
         let path_versions = trie.get_path_versions(&parts);
-        snapshots.insert(tag, DepSnapshot { parts, path_versions });
+        snapshots.insert(
+            tag,
+            DepSnapshot {
+                parts,
+                path_versions,
+            },
+        );
     }
     snapshots
 }
@@ -342,7 +356,8 @@ mod tests {
         let trie = PrefixTrie::new();
         trie.invalidate("user:1");
 
-        let snapshots = build_dependency_snapshots(&trie, vec!["user:1".to_string(), "user:2".to_string()]);
+        let snapshots =
+            build_dependency_snapshots(&trie, vec!["user:1".to_string(), "user:2".to_string()]);
 
         assert_eq!(snapshots.len(), 2);
         assert_eq!(snapshots["user:1"].parts, vec!["user", "1"]);
@@ -357,12 +372,12 @@ mod tests {
         let v_old = trie_old.get_path_versions(&["user", "1"])[2];
 
         // Process restarts, new trie starts at 0 or current time
-        let trie_new = PrefixTrie::new(); 
-        
+        let trie_new = PrefixTrie::new();
+
         // Snapshot from old process
         let snapshot_v = vec![0, 0, v_old];
-        
-        // In the new trie, user:1 is 0. 
+
+        // In the new trie, user:1 is 0.
         // 0 <= v_old (which is a high timestamp).
         // This means the cache entry is considered VALID even if it was from a previous process.
         // This is exactly what we wanted: persistence compatibility.
@@ -371,7 +386,7 @@ mod tests {
         // Now if we invalidate in the new process
         trie_new.invalidate("user:1");
         let v_new = trie_new.get_path_versions(&["user", "1"])[2];
-        
+
         assert!(v_new >= v_old); // Should be same or greater depending on clock
         assert!(!trie_new.is_valid_path(&["user", "1"], &snapshot_v));
     }
@@ -387,16 +402,16 @@ mod tests {
         let current_versions = trie.get_path_versions(&parts);
         assert_eq!(current_versions[2], 100); // acme caught up
         assert_eq!(current_versions[4], 500); // 42 caught up
-        assert_eq!(current_versions[0], 0);   // root stayed 0
+        assert_eq!(current_versions[0], 0); // root stayed 0
     }
 
     #[test]
     fn test_pruning() {
         let trie = PrefixTrie::new();
-        
+
         // Use user:1
         trie.invalidate("user:1");
-        
+
         // Advance "time" by using a tiny max_age and sleeping or just checking age 0
         // But since we can't easily mock SystemTime in std, let's just verify structure
         assert_eq!(trie.root.children.len(), 1);
@@ -404,7 +419,7 @@ mod tests {
         // Prune with age 0 (should prune everything that wasn't JUST touched)
         // Wait, current node is touched in invalidate.
         // Let's use a long sleep if needed, or just verify it doesn't prune what's new
-        trie.prune(100); 
+        trie.prune(100);
         assert_eq!(trie.root.children.len(), 1);
 
         std::thread::sleep(std::time::Duration::from_secs(2)); // Increased from 100ms to 2s for u64 seconds resolution
@@ -416,21 +431,21 @@ mod tests {
     fn test_hlc_ratchet() {
         let trie = PrefixTrie::new();
         let tag = "test:hlc";
-        
+
         let v1 = trie.invalidate(tag);
         assert!(v1 > 0);
-        
+
         // Force a future version artificially
         let future_ver = v1 + 1_000_000_000; // +1 second roughly in nanos
         trie.set_min_version(tag, future_ver);
-        
+
         let current_ver = trie.get_tag_version(tag);
         assert!(current_ver >= future_ver);
-        
+
         // Now invalidate again. It should be > future_ver + 1 (Ratchet effect)
         let v2 = trie.invalidate(tag);
         assert!(v2 > future_ver);
-        
+
         // Even if our local wall clock is behind future_ver, v2 must be ahead.
         // (This guarantees causal consistency)
     }
@@ -439,19 +454,19 @@ mod tests {
     fn test_hlc_fast_forward() {
         let trie = PrefixTrie::new();
         let tag = "test:fast_forward";
-        
+
         // Initial state
         let _v1 = trie.invalidate(tag);
-        
+
         // Simulate receiving a message from a node far in the future
         let far_future = u64::MAX - 1000;
         trie.set_min_version(tag, far_future);
-        
+
         assert_eq!(trie.get_tag_version(tag), far_future);
-        
+
         // Invalidate locally
         let v_new = trie.invalidate(tag);
-        
+
         // MUST increment strictly from the highest seen version
         assert!(v_new > far_future);
     }

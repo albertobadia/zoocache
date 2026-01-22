@@ -1,13 +1,13 @@
+mod lmdb;
 mod memory;
 mod redis;
-mod lmdb;
 
-pub(crate) use memory::InMemoryStorage;
-pub(crate) use self::redis::RedisStorage;
 pub(crate) use self::lmdb::LmdbStorage;
+pub(crate) use self::redis::RedisStorage;
+pub(crate) use memory::InMemoryStorage;
 
-use pyo3::prelude::*;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
+use pyo3::prelude::*;
 use pythonize::pythonize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36,7 +36,7 @@ impl CacheEntry {
         let mut value_buf = Vec::new();
         let mut serializer = rmp_serde::Serializer::new(&mut value_buf);
         let mut depythonizer = pythonize::Depythonizer::from_object(self.value.bind(py));
-        
+
         serde_transcode::transcode(&mut depythonizer, &mut serializer)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
@@ -66,7 +66,7 @@ impl CacheEntry {
         // 3. Deserialize MsgPack value directly to Python object (streaming/transcode)
         let mut deserializer = rmp_serde::decode::Deserializer::new(&entry.value[..]);
         let transcoder = serde_transcode::Transcoder::new(&mut deserializer);
-        
+
         let py_val = pythonize(py, &transcoder)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 

@@ -1,7 +1,7 @@
+use r2d2::Pool;
 use redis::{Client, Commands};
 use std::sync::Arc;
 use std::thread;
-use r2d2::Pool;
 
 use super::InvalidateBus;
 
@@ -34,11 +34,14 @@ impl RedisPubSubBus {
             let mut backoff_ms = 100;
             loop {
                 let conn_res = pool.get();
-                
+
                 let mut conn = match conn_res {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("[zoocache] Bus listener connection failed: {}. Retrying in {}ms...", e, backoff_ms);
+                        eprintln!(
+                            "[zoocache] Bus listener connection failed: {}. Retrying in {}ms...",
+                            e, backoff_ms
+                        );
                         thread::sleep(std::time::Duration::from_millis(backoff_ms));
                         backoff_ms = (backoff_ms * 2).min(5000);
                         continue;
@@ -64,7 +67,7 @@ impl RedisPubSubBus {
                         callback(tag, ver);
                     }
                 }
-                
+
                 eprintln!("[zoocache] Bus connection lost. Reconnecting...");
                 thread::sleep(std::time::Duration::from_millis(100));
             }
