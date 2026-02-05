@@ -18,7 +18,7 @@ use crate::trie::DepSnapshot;
 #[derive(Serialize, Deserialize)]
 struct SerializableCacheEntry {
     #[serde(with = "serde_bytes")]
-    value: Vec<u8>, // Internal MsgPack for the value
+    value: Vec<u8>,
     dependencies: HashMap<String, DepSnapshot>,
     trie_version: u64,
 }
@@ -31,8 +31,6 @@ pub(crate) struct CacheEntry {
 
 impl CacheEntry {
     pub fn serialize(&self, py: Python) -> PyResult<Vec<u8>> {
-        // 1. Convert Python object directly to MsgPack via transcoding
-        // This avoids the intermediate serde_json::Value allocation.
         let mut value_buf = Vec::new();
         let mut serializer = rmp_serde::Serializer::new(&mut value_buf);
         let mut depythonizer = pythonize::Depythonizer::from_object(self.value.bind(py));
@@ -46,24 +44,19 @@ impl CacheEntry {
             trie_version: self.trie_version,
         };
 
-        // 2. Serialize metadata and the already-msgpacked value to final MsgPack
         let packed = rmp_serde::to_vec(&entry)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // 3. Compress
         Ok(compress_prepend_size(&packed))
     }
 
     pub fn deserialize(py: Python, data: &[u8]) -> PyResult<Self> {
-        // 1. Decompress
         let decompressed = decompress_size_prepended(data)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // 2. Deserialize metadata
         let entry: SerializableCacheEntry = rmp_serde::from_slice(&decompressed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // 3. Deserialize MsgPack value directly to Python object (streaming/transcode)
         let mut deserializer = rmp_serde::decode::Deserializer::new(&entry.value[..]);
         let transcoder = serde_transcode::Transcoder::new(&mut deserializer);
 

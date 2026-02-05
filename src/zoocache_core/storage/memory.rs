@@ -1,15 +1,8 @@
+use crate::utils::now_secs;
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{CacheEntry, Storage};
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 
 pub(crate) struct InMemoryStorage {
     map: DashMap<String, (Arc<CacheEntry>, Option<u64>, u64)>, // (entry, expires_at, last_accessed)
