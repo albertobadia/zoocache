@@ -1,16 +1,10 @@
+use crate::utils::now_secs;
 use pyo3::prelude::*;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use std::sync::Arc;
 
 use super::{CacheEntry, Storage};
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 
 pub(crate) struct RedisStorage {
     pool: Pool<Client>,
@@ -107,7 +101,8 @@ impl Storage for RedisStorage {
             match res {
                 Ok((next_cursor, keys)) => {
                     if !keys.is_empty() {
-                        let _: redis::RedisResult<()> = conn.del(keys);
+                        let _: redis::RedisResult<()> =
+                            redis::cmd("UNLINK").arg(&keys).query(&mut conn);
                     }
                     cursor = next_cursor;
                     if cursor == 0 {
@@ -140,8 +135,9 @@ impl Storage for RedisStorage {
 
         let to_evict: Vec<String> = keys.into_iter().step_by(2).collect();
 
-        for key in &to_evict {
-            let _: redis::RedisResult<()> = conn.del(self.full_key(key));
+        if !to_evict.is_empty() {
+            let full_keys: Vec<String> = to_evict.iter().map(|k| self.full_key(k)).collect();
+            let _: redis::RedisResult<()> = conn.del(&full_keys);
         }
 
         to_evict

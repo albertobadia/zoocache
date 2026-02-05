@@ -60,8 +60,22 @@ pub(crate) fn complete_flight(
 
 pub(crate) fn wait_for_flight(flight: &Flight) -> FlightStatus {
     let mut state = flight.state.lock().unwrap();
+    let timeout = std::time::Duration::from_secs(60);
+    let start = std::time::Instant::now();
+
     while state.0 == FlightStatus::Pending {
-        state = flight.condvar.wait(state).unwrap();
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            return FlightStatus::Error;
+        }
+        let (new_state, result) = flight
+            .condvar
+            .wait_timeout(state, timeout - elapsed)
+            .unwrap();
+        state = new_state;
+        if result.timed_out() {
+            return FlightStatus::Error;
+        }
     }
     state.0
 }

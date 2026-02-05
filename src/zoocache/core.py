@@ -12,7 +12,6 @@ _op_counter: int = 0
 
 
 def _reset() -> None:
-    """Internal use only: reset the global state for testing."""
     global _core, _config, _op_counter
     _core = None
     _config = {}
@@ -30,9 +29,7 @@ def configure(
 ) -> None:
     global _core, _config
     if _core is not None:
-        raise RuntimeError(
-            "zoocache already initialized, call configure() before any cache operation"
-        )
+        raise RuntimeError("zoocache already initialized")
     _config = {
         "storage_url": storage_url,
         "bus_url": bus_url,
@@ -47,7 +44,6 @@ def configure(
 def _get_core() -> Core:
     global _core
     if _core is None:
-        # Filter config for Rust Core.__init__
         core_args = {k: v for k, v in _config.items() if k != "prune_after"}
         _core = Core(**core_args)
     return _core
@@ -63,7 +59,6 @@ def _maybe_prune() -> None:
 
 
 def prune(max_age_secs: int = 3600) -> None:
-    """Manually trigger pruning of the PrefixTrie."""
     _get_core().prune(max_age_secs)
 
 
@@ -120,7 +115,6 @@ def cacheable(
             if fut is not None:
                 return await fut
 
-            # Fallback if flight was already finished before we could wait
             return await execute(key, args, kwargs)
 
         async def execute(key, args, kwargs):
@@ -154,5 +148,4 @@ def cacheable(
 
 
 def version() -> str:
-    """Return the version of the Rust core."""
     return _get_core().version()

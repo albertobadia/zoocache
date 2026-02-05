@@ -2,6 +2,7 @@ mod bus;
 mod flight;
 mod storage;
 mod trie;
+mod utils;
 
 use dashmap::DashMap;
 use pyo3::prelude::*;
@@ -102,7 +103,6 @@ impl Core {
                     storage_worker.touch(&key, ttl);
                     last_touches.insert(key, now);
 
-                    // Periodic cleanup of last_touches to avoid memory leak
                     if last_touches.len() > 10000 {
                         last_touches.retain(|_, &mut instant| {
                             now.duration_since(instant) < Duration::from_secs(300)
@@ -166,7 +166,6 @@ impl Core {
             return Ok((None, true, None));
         }
 
-        // Return the existing future if it exists
         let fut = flight
             .py_future
             .lock()
@@ -205,7 +204,6 @@ impl Core {
 
         let global_version = self.trie.get_global_version();
 
-        // Short-circuit: O(1) validation if no invalidations occurred globally
         if entry.trie_version == global_version {
             return Ok(Some(entry.value.clone_ref(py)));
         }
@@ -217,8 +215,6 @@ impl Core {
             return Ok(None);
         }
 
-        // Lazy Update: Re-stamp the entry with the current global version
-        // so that the next hit can use the O(1) short-circuit.
         let current_global_version = self.trie.get_global_version();
         if entry.trie_version < current_global_version {
             let storage = Arc::clone(&self.storage);
@@ -231,7 +227,6 @@ impl Core {
             py.detach(move || storage.set(key_str, updated_entry, None));
         }
 
-        // TTI: Deferred refresh
         if let (Some(tx), Some(ttl)) = (&self.tti_tx, self.default_ttl) {
             let _ = tx.send((key.to_string(), ttl));
         }

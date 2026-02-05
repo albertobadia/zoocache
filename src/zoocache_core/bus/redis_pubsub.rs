@@ -68,7 +68,6 @@ impl RedisPubSubBus {
                     }
                 }
 
-                eprintln!("[zoocache] Bus connection lost. Reconnecting...");
                 thread::sleep(std::time::Duration::from_millis(100));
             }
         });

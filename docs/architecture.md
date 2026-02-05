@@ -6,13 +6,13 @@ Zoocache is designed as a high-performance caching layer that bridge the gap bet
 
 The system is split into two main layers:
 
-### 1. The Plano de Control (Rust Core)
+### 1. The Control Plane (Rust Core)
 The Rust engine manages the complex logic of the cache:
 - **PrefixTrie**: A thread-safe, hierarchical structure that tracks versioning for dependency tags. Includes a **Global Version Counter** for $O(1)$ validation short-circuiting.
 - **Flight Manager**: Handles synchronization to prevent "thundering herd" scenarios for both Sync and Async functions.
 - **[Hybrid Logical Clocks (HLC)](consistency.md#hybrid-logical-clocks-hlc)**: Ensures causal consistency across distributed nodes by ratcheting timestamps based on wall clocks and logical counters.
 
-### 2. The Plano de Datos (Python Wrapper)
+### 2. The Data Plane (Python Wrapper)
 The Python layer provides the user-facing API:
 - **Decorators**: `@cacheable` intercepts function calls.
 - **Context Tracking**: `DepsTracker` uses `contextvars` to register dynamic dependencies during function execution.

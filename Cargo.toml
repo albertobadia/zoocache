@@ -22,3 +22,10 @@ lz4_flex = "0.11"
 pythonize = "0.27"
 serde_bytes = "0.11"
 serde-transcode = "1.1"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+strip = true
+panic = "abort"

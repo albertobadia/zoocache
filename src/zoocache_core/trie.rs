@@ -1,9 +1,9 @@
+use crate::utils::{now_nanos, now_secs};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]
 pub(crate) struct TrieNode {
@@ -14,11 +14,7 @@ pub(crate) struct TrieNode {
 
 impl TrieNode {
     fn touch(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.last_accessed.store(now, Ordering::Relaxed);
+        self.last_accessed.store(now_secs(), Ordering::Relaxed);
     }
 }
 
@@ -55,10 +51,7 @@ impl PrefixTrie {
             current.touch();
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
+        let now = now_nanos();
 
         let prev = current
             .version
@@ -140,7 +133,6 @@ impl PrefixTrie {
         let mut current = Arc::clone(&self.root);
         current.touch();
 
-        // Root version sync
         current
             .version
             .fetch_max(snapshot_versions[0], Ordering::SeqCst);
@@ -182,10 +174,7 @@ impl PrefixTrie {
     }
 
     pub fn prune(&self, max_age_secs: u64) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = now_secs();
 
         self.root
             .children
@@ -193,11 +182,9 @@ impl PrefixTrie {
     }
 
     fn prune_recursive(node: &Arc<TrieNode>, now: u64, max_age_secs: u64) -> bool {
-        // Prune children first
         node.children
             .retain(|_, child| !Self::prune_recursive(child, now, max_age_secs));
 
-        // Current node is prunable if it's a leaf and it's old
         let last = node.last_accessed.load(Ordering::Relaxed);
         let age = now.saturating_sub(last);
 
@@ -217,8 +204,6 @@ pub(crate) fn validate_dependencies(
     deps: &HashMap<String, DepSnapshot>,
 ) -> bool {
     for snapshot in deps.values() {
-        // Passive sync: if we see a newer version in the snapshot, our local trie should catch up.
-        // This makes the system self-healing if a pub/sub message was lost.
         trie.catch_up(&snapshot.parts, &snapshot.path_versions);
 
         if !trie.is_valid_path(&snapshot.parts, &snapshot.path_versions) {
