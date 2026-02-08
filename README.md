@@ -33,6 +33,7 @@
 - ⚡ **Anti-Avalanche (SingleFlight)**: Protects your backend from "thundering herd" effects by coalescing concurrent identical requests.
 - 📦 **Smart Serialization**: Transparently handles MsgPack and LZ4 compression for maximum throughput and minimum storage.
 - 🔄 **Self-Healing Distributed Cache**: Automatic synchronization via Redis Bus with robust error recovery.
+- 🛡️ **Hardened Safety**: Strict tag validation and mutex-poisoning protection to ensure zero-crash operations.
 
 ---
 

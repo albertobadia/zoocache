@@ -13,6 +13,8 @@ Zoocache uses the **SingleFlight** pattern. For any missing or stale key, only o
 If the function execution inside a leader fails (raises an exception):
 - The exception is propagated to the leader.
 - **Fail-fast for followers**: All waiting followers immediately receive a `RuntimeError` stating the leader failed. We do **not** restart the execution for every follower to avoid repeated hammering of a failing backend.
+- **Safety Guardrails (ADR 0009)**: If the leader crashes or the thread panics, Zoocache detects the "poisoned" mutex and gracefully notifies all followers with an error. No more hanging or cascading crashes.
+- **Timeout**: Followers will only wait for a maximum of 60 seconds before giving up and returning an error, ensuring responsiveness even in extreme stall scenarios.
 
 ## 2. Memory Management (Trie Bloat)
 
@@ -50,6 +52,14 @@ Every entry stored in the cache includes a full snapshot of the versions of its 
 - **Lazy Update (Self-Healing)**: If the local metadata matches but the global Trie version has changed, the entry is validated. If successful, the entry's version is updated in storage (**ADR 0006**).
 - If the metadata shows **newer** versions than the local Trie, the node realizes it's behind and **catches up automatically** (Ratchet).
 - This ensures that missing a Pub/Sub message only results in temporary eventual consistency, but reading any fresh data "repairs" the local node and restores peak $O(1)$ performance.
+
+## 5. Storage Transaction Safety
+
+Low-level storage operations can fail due to various reasons (disk full, invalid key size, etc.).
+
+### The Protection: Atomic Consistency
+- **Error Propagation**: Any error at the storage level (e.g., LMDB errors) is caught and propagated to the Python layer as a `RuntimeError`.
+- **Atomic Counter Sync**: For storage backends like LMDB, in-memory counters are only updated *after* the database transaction has successfully committed, ensuring the `len()` report is always accurate.
 
 ## Trade-offs & Considerations
 - **Follower Cancellation**: Currently, if a follower's request is cancelled (e.g., HTTP client disconnects), the leader continues its work to ensure the cache eventually gets populated for others.
