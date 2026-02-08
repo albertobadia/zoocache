@@ -107,32 +107,35 @@ def cacheable(
             key = _generate_key(func, namespace, args, kwargs)
             _manager.maybe_prune()
 
-            val, is_leader, fut = core.get_or_entry_async(key)
-            if val is not None:
-                return val
+            while True:
+                val, is_leader, fut = core.get_or_entry_async(key)
+                if val is not None:
+                    return val
 
-            if is_leader:
-                leader_fut = asyncio.get_running_loop().create_future()
-                core.register_flight_future(key, leader_fut)
-                try:
-                    with DepsTracker():
-                        res = await func(*args, **kwargs)
-                        core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
-                    core.finish_flight(key, False, res)
-                    leader_fut.set_result(res)
-                    return res
-                except Exception as e:
-                    core.finish_flight(key, True, None)
-                    leader_fut.set_exception(e)
-                    raise
+                if is_leader:
+                    break
 
-            if fut is not None:
-                return await fut
+                if fut is not None:
+                    return await fut
 
-            with DepsTracker():
-                res = await func(*args, **kwargs)
-                core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
-            return res
+                # Follower, but future not ready yet (race condition).
+                # Yield and retry.
+                await asyncio.sleep(0)
+
+            # Executive logic for leader
+            leader_fut = asyncio.get_running_loop().create_future()
+            core.register_flight_future(key, leader_fut)
+            try:
+                with DepsTracker():
+                    res = await func(*args, **kwargs)
+                    core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                core.finish_flight(key, False, res)
+                leader_fut.set_result(res)
+                return res
+            except Exception as e:
+                core.finish_flight(key, True, None)
+                leader_fut.set_exception(e)
+                raise
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):

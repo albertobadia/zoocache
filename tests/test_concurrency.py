@@ -145,5 +145,68 @@ async def test_race_condition_protection():
     results = await asyncio.gather(*tasks)
 
     assert all(r == "done" for r in results)
-    # Should be exactly 1 call due to flight coalescing
+@pytest.mark.asyncio
+async def test_async_stress_race_condition():
+    """
+    Stress test with high concurrency to ensure the race condition fix is robust.
+    Based on reproduce_race.py
+    """
+    from zoocache import _reset, configure, clear
+    _reset()
+    configure()
+    clear()
+
+    calls = 0
+
+    @cacheable(namespace="stress_async")
+    async def stress_func(arg):
+        nonlocal calls
+        # Simulate small work but enough to allow context switches
+        await asyncio.sleep(0.01)
+        calls += 1
+        return f"result-{arg}"
+
+    # Launch 500 concurrent tasks
+    n_tasks = 500
+    tasks = [stress_func("common_key") for _ in range(n_tasks)]
+    
+    results = await asyncio.gather(*tasks)
+    
+    assert len(results) == n_tasks
+    assert all(r == "result-common_key" for r in results)
+    # MUST be exactly 1 call
     assert calls == 1
+
+
+def test_sync_stress_race_condition():
+    """
+    Stress test for synchronous thundering herd.
+    Based on reproduce_race_sync.py
+    """
+    from zoocache import _reset, configure, clear
+    _reset()
+    configure()
+    clear()
+
+    calls = {"count": 0}
+    lock = threading.Lock()
+
+    @cacheable(namespace="stress_sync")
+    def stress_sync_func(arg):
+        time.sleep(0.01)
+        with lock:
+            calls["count"] += 1
+        return f"result-{arg}"
+
+    def worker():
+        stress_sync_func("common_key_sync")
+
+    n_threads = 100
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert calls["count"] == 1

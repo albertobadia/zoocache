@@ -24,13 +24,23 @@ use crate::utils::{to_conn_err, to_runtime_err};
 pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
 
 fn validate_tag(tag: &str) -> PyResult<()> {
+    let mut depth = 0;
     for c in tag.chars() {
+        if c == ':' {
+            depth += 1;
+        }
         if !c.is_alphanumeric() && c != '_' && c != ':' {
             return Err(InvalidTag::new_err(format!(
                 "Invalid character '{}' in tag '{}'. Only alphanumeric, '_' and ':' are allowed.",
                 c, tag
             )));
         }
+    }
+    if depth > 16 {
+        return Err(InvalidTag::new_err(format!(
+            "Tag depth exceeded: {}. Max allowed depth is 16.",
+            depth
+        )));
     }
     if tag.is_empty() {
         return Err(InvalidTag::new_err("Tag cannot be empty"));
