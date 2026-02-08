@@ -76,9 +76,19 @@ impl Storage for InMemoryStorage {
             .map(|e| (e.key().clone(), e.value().2))
             .collect();
 
-        entries.sort_by_key(|(_, ts)| *ts);
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let to_evict: Vec<String> = entries.into_iter().take(count).map(|(k, _)| k).collect();
+        let count = count.min(entries.len());
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        entries.select_nth_unstable_by_key(count - 1, |(_, ts)| *ts);
+        
+        // After partitioning, the first `count` elements are the oldest (smallest timestamp)
+        let to_evict: Vec<String> = entries.drain(..count).map(|(k, _)| k).collect();
 
         for key in &to_evict {
             self.map.remove(key);
