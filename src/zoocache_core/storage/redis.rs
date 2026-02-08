@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use std::sync::Arc;
+use crate::utils::to_conn_err;
 
 use super::{CacheEntry, Storage};
 
@@ -47,45 +48,50 @@ impl Storage for RedisStorage {
         result
     }
 
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) {
-        let Ok(mut conn) = self.pool.get() else {
-            return;
-        };
+    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
 
-        let data = Python::attach(|py| entry.serialize(py).ok());
-
-        if let Some(data) = data {
+        if let Some(data) = Python::attach(|py| entry.serialize(py).ok()) {
             let full_key = self.full_key(&key);
+            let mut pipe = redis::pipe();
+            
             match ttl {
-                Some(t) => {
-                    let _: redis::RedisResult<()> = conn.set_ex(full_key, data, t);
-                }
-                None => {
-                    let _: redis::RedisResult<()> = conn.set(full_key, data);
-                }
+                Some(t) => pipe.set_ex(&full_key, data, t),
+                None => pipe.set(&full_key, data),
+            };
+            pipe.zadd(self.lru_key(), &key, now_secs() as f64);
+            let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
+        }
+        Ok(())
+    }
+
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
+        let now = now_secs() as f64;
+        let mut pipe = redis::pipe();
+        
+        for (key, ttl) in updates {
+            if let Some(t) = ttl {
+                pipe.expire(self.full_key(&key), t as i64);
             }
-            let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), &key, now_secs() as f64);
+            pipe.zadd(self.lru_key(), &key, now);
         }
+        let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
+        Ok(())
     }
 
-    fn touch(&self, key: &str, ttl: u64) {
-        if let Ok(mut conn) = self.pool.get() {
-            let _: redis::RedisResult<()> = conn.expire(self.full_key(key), ttl as i64);
-            let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), key, now_secs() as f64);
-        }
+    fn remove(&self, key: &str) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
+        let _: () = redis::pipe()
+            .del(self.full_key(key))
+            .zrem(self.lru_key(), key)
+            .query(&mut conn)
+            .map_err(to_conn_err)?;
+        Ok(())
     }
 
-    fn remove(&self, key: &str) {
-        if let Ok(mut conn) = self.pool.get() {
-            let _: redis::RedisResult<()> = conn.del(self.full_key(key));
-            let _: redis::RedisResult<()> = conn.zrem(self.lru_key(), key);
-        }
-    }
-
-    fn clear(&self) {
-        let Ok(mut conn) = self.pool.get() else {
-            return;
-        };
+    fn clear(&self) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
         let pattern = format!("{}:*", self.prefix);
         let mut cursor: u64 = 0;
 
@@ -112,6 +118,7 @@ impl Storage for RedisStorage {
                 Err(_) => break,
             }
         }
+        Ok(())
     }
 
     fn len(&self) -> usize {
@@ -122,24 +129,24 @@ impl Storage for RedisStorage {
         count.unwrap_or(0)
     }
 
-    fn evict_lru(&self, count: usize) -> Vec<String> {
-        let Ok(mut conn) = self.pool.get() else {
-            return vec![];
-        };
+    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
 
-        let keys: redis::RedisResult<Vec<String>> = conn.zpopmin(self.lru_key(), count as isize);
-        let keys = match keys {
-            Ok(k) => k,
-            Err(_) => return vec![],
-        };
-
-        let to_evict: Vec<String> = keys.into_iter().step_by(2).collect();
+        let items: Vec<(String, f64)> = conn
+            .zpopmin(self.lru_key(), count as isize)
+            .unwrap_or_default();
+        
+        let to_evict: Vec<String> = items.into_iter().map(|(k, _)| k).collect();
 
         if !to_evict.is_empty() {
             let full_keys: Vec<String> = to_evict.iter().map(|k| self.full_key(k)).collect();
-            let _: redis::RedisResult<()> = conn.del(&full_keys);
+            let _: () = redis::pipe()
+                .del(&full_keys)
+                .query(&mut conn)
+                .map_err(to_conn_err)?;
         }
 
-        to_evict
+        Ok(to_evict)
     }
 }
+

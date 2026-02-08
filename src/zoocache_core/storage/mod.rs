@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::trie::DepSnapshot;
+use crate::utils::to_runtime_err;
 
 #[derive(Serialize, Deserialize)]
 struct SerializableCacheEntry {
@@ -28,6 +29,8 @@ pub(crate) struct CacheEntry {
     pub dependencies: HashMap<String, DepSnapshot>,
     pub trie_version: u64,
 }
+
+const MAGIC_HEADER: &[u8] = b"ZOO1";
 
 impl CacheEntry {
     pub fn serialize(&self, py: Python) -> PyResult<Vec<u8>> {
@@ -44,18 +47,26 @@ impl CacheEntry {
             trie_version: self.trie_version,
         };
 
-        let packed = rmp_serde::to_vec(&entry)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        Ok(compress_prepend_size(&packed))
+        let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
+        let compressed = compress_prepend_size(&packed);
+        
+        // Prepend Magic Header
+        let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
+        final_data.extend_from_slice(MAGIC_HEADER);
+        final_data.extend_from_slice(&compressed);
+        
+        Ok(final_data)
     }
 
     pub fn deserialize(py: Python, data: &[u8]) -> PyResult<Self> {
-        let decompressed = decompress_size_prepended(data)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        let entry: SerializableCacheEntry = rmp_serde::from_slice(&decompressed)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        if data.len() < MAGIC_HEADER.len() || &data[..MAGIC_HEADER.len()] != MAGIC_HEADER {
+             return Err(to_runtime_err("Invalid cache file format or version mismatch"));
+        }
+        
+        let payload = &data[MAGIC_HEADER.len()..];
+        let decompressed = decompress_size_prepended(payload).map_err(to_runtime_err)?;
+        let entry: SerializableCacheEntry =
+            rmp_serde::from_slice(&decompressed).map_err(to_runtime_err)?;
 
         let mut deserializer = rmp_serde::decode::Deserializer::new(&entry.value[..]);
         let transcoder = serde_transcode::Transcoder::new(&mut deserializer);
@@ -73,10 +84,10 @@ impl CacheEntry {
 
 pub(crate) trait Storage: Send + Sync {
     fn get(&self, key: &str) -> Option<Arc<CacheEntry>>;
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>);
-    fn touch(&self, key: &str, ttl: u64);
-    fn remove(&self, key: &str);
-    fn clear(&self);
+    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
+    fn remove(&self, key: &str) -> PyResult<()>;
+    fn clear(&self) -> PyResult<()>;
     fn len(&self) -> usize;
-    fn evict_lru(&self, count: usize) -> Vec<String>;
+    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
 }

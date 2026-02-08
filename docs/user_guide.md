@@ -131,6 +131,10 @@ org:1                  ← invalidate("org:1") kills ALL below
     └── org:1:team:b:user:3
 ```
 
+> [!IMPORTANT]
+> Tags are restricted to **alphanumeric characters, `_`, and `:`**. 
+> Using any other character will raise an `InvalidTag` exception.
+
 ### Dynamic Dependencies with `add_deps()`
 
 Register dependencies at runtime inside the function:
@@ -410,6 +414,14 @@ prune(3600)
 **Cause**: Short-lived processes or different namespaces.
 
 **Debug**: Ensure all instances use the same `namespace` and `prefix`.
+
+### `InvalidTag` Exception
+
+**Symptom**: Code raises `zoocache.InvalidTag`.
+
+**Cause**: You are using forbidden characters in a dependency tag or invalidation call.
+
+**Solution**: Ensure your tags only contain `a-z`, `A-Z`, `0-9`, `_` or `:`.
 
 ---
 

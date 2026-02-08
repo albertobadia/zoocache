@@ -22,6 +22,13 @@ In the diagram above, if we invalidate `org:acme`, we bump its version. Any cach
 - **Validation**: $O(1)$ in the common case (via **Global Version Short-circuit**) and $O(D \times N)$ in the worst case (where $N$ is the number of dependencies).
 - **Self-Healing**: $O(1)$ performance is automatically restored after the first validation hit following a change (**Lazy Update**).
 
+## Tag Syntax Rules
+
+To ensure the reliability of the invalidation bus and prevent parsing ambiguities, Zoocache enforces strict rules for tag characters:
+- **Allowed Characters**: Alphanumeric (`a-z`, `A-Z`, `0-9`), underscores (`_`), and colons (`:`).
+- **Forbidden**: Any other symbol, including spaces and the pipe character (`|`).
+- **Enforcement**: Providing an invalid tag to `invalidate()` or `set()` (via dependencies) will raise a `zoocache.InvalidTag` exception.
+
 ## Trade-offs & Considerations
 - **Tag Structure**: Dependencies must be hierarchical. If you have non-hierarchical relationships, they must be represented as multiple separate tags.
 - **Atomic Bumps**: Invalidation uses atomic operations, which are very fast but can still be a bottleneck under extreme contention on the same exact tag.

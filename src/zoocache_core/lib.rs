@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::sync::mpsc::{self, Sender};
@@ -18,6 +19,39 @@ use std::thread;
 use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
+use crate::utils::{to_conn_err, to_runtime_err};
+
+pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
+
+fn validate_tag(tag: &str) -> PyResult<()> {
+    let mut depth = 0;
+    for c in tag.chars() {
+        if c == ':' {
+            depth += 1;
+        }
+        if !c.is_alphanumeric() && c != '_' && c != ':' {
+            return Err(InvalidTag::new_err(format!(
+                "Invalid character '{}' in tag '{}'. Only alphanumeric, '_' and ':' are allowed.",
+                c, tag
+            )));
+        }
+    }
+    if depth > 16 {
+        return Err(InvalidTag::new_err(format!(
+            "Tag depth exceeded: {}. Max allowed depth is 16.",
+            depth
+        )));
+    }
+    if tag.is_empty() {
+        return Err(InvalidTag::new_err("Tag cannot be empty"));
+    }
+    Ok(())
+}
+
+enum WorkerMsg {
+    Touch(String, Option<u64>),
+    Prune(u64),
+}
 
 #[pyclass]
 struct Core {
@@ -27,9 +61,7 @@ struct Core {
     flights: DashMap<String, Arc<Flight>>,
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
-    #[allow(dead_code)]
-    read_extend_ttl: bool,
-    tti_tx: Option<Sender<(String, u64)>>,
+    tti_tx: Option<Sender<WorkerMsg>>,
 }
 
 #[pymethods]
@@ -46,15 +78,10 @@ impl Core {
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
-                Arc::new(RedisStorage::new(url, prefix).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
-                })?)
+                Arc::new(RedisStorage::new(url, prefix).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
-                let path = &url[7..];
-                Arc::new(LmdbStorage::new(path).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?)
+                Arc::new(LmdbStorage::new(&url[7..]).map_err(to_runtime_err)?)
             }
             Some(url) => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -71,9 +98,7 @@ impl Core {
             Some(url) => {
                 let channel = prefix.map(|p| format!("{}:invalidate", p));
                 let r_bus =
-                    Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
-                    })?);
+                    Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(to_conn_err)?);
 
                 let t_clone = trie.clone();
                 r_bus.start_listener(move |tag, ver| {
@@ -85,23 +110,49 @@ impl Core {
         };
 
         let mut tti_tx = None;
-        if default_ttl.is_some() && read_extend_ttl {
-            let (tx, rx) = mpsc::channel::<(String, u64)>();
+        if read_extend_ttl {
+            let (tx, rx) = mpsc::channel::<WorkerMsg>();
             let storage_worker = Arc::clone(&storage);
+            let trie_worker = trie.clone();
 
             thread::spawn(move || {
-                let mut last_touches: HashMap<String, Instant> = HashMap::new();
-                while let Ok((key, ttl)) = rx.recv() {
+                let mut last_touches = HashMap::<String, Instant>::new();
+                let mut batch = HashMap::<String, Option<u64>>::new();
+                let mut last_flush = Instant::now();
+
+                while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
+                    if e == mpsc::RecvTimeoutError::Timeout {
+                        // Empty message to trigger periodic flush
+                        Ok(WorkerMsg::Touch(String::new(), None))
+                    } else {
+                        Err(e)
+                    }
+                }) {
                     let now = Instant::now();
-                    if last_touches
-                        .get(&key)
-                        .is_some_and(|&last| now.duration_since(last) < Duration::from_secs(60))
-                    {
-                        continue;
+                    match msg {
+                        WorkerMsg::Touch(key, ttl) => {
+                            if !key.is_empty() {
+                                if last_touches.get(&key).is_some_and(|&last| {
+                                    now.duration_since(last) < Duration::from_secs(30)
+                                }) {
+                                    continue;
+                                }
+                                batch.insert(key.clone(), ttl);
+                                last_touches.insert(key, now);
+                            }
+                        }
+                        WorkerMsg::Prune(max_age) => {
+                            trie_worker.prune(max_age);
+                        }
                     }
 
-                    storage_worker.touch(&key, ttl);
-                    last_touches.insert(key, now);
+                    if (batch.len() >= 1000
+                        || now.duration_since(last_flush) > Duration::from_secs(30))
+                        && !batch.is_empty()
+                    {
+                        let _ = storage_worker.touch_batch(batch.drain().collect());
+                        last_flush = now;
+                    }
 
                     if last_touches.len() > 10000 {
                         last_touches.retain(|_, &mut instant| {
@@ -120,7 +171,6 @@ impl Core {
             flights: DashMap::new(),
             default_ttl,
             max_entries,
-            read_extend_ttl,
             tti_tx,
         })
     }
@@ -140,7 +190,7 @@ impl Core {
 
         match status {
             FlightStatus::Done => {
-                let state = flight.state.lock().unwrap();
+                let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
                 Ok((state.1.as_ref().map(|obj| obj.clone_ref(py)), false))
             }
             FlightStatus::Error => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -169,7 +219,7 @@ impl Core {
         let fut = flight
             .py_future
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|f| f.clone_ref(py));
         Ok((None, false, fut))
@@ -177,7 +227,7 @@ impl Core {
 
     fn register_flight_future(&self, key: &str, future: Py<PyAny>) {
         if let Some(flight) = self.flights.get(key) {
-            let mut fut_guard = flight.py_future.lock().unwrap();
+            let mut fut_guard = flight.py_future.lock().unwrap_or_else(|e| e.into_inner());
             *fut_guard = Some(future);
         }
     }
@@ -211,7 +261,7 @@ impl Core {
         let valid = py.detach(|| validate_dependencies(&self.trie, &entry.dependencies));
         if !valid {
             let storage = Arc::clone(&self.storage);
-            py.detach(|| storage.remove(key));
+            py.detach(|| storage.remove(key))?;
             return Ok(None);
         }
 
@@ -224,11 +274,11 @@ impl Core {
                 trie_version: current_global_version,
             });
             let key_str = key.to_string();
-            py.detach(move || storage.set(key_str, updated_entry, None));
+            py.detach(move || storage.set(key_str, updated_entry, None))?;
         }
 
-        if let (Some(tx), Some(ttl)) = (&self.tti_tx, self.default_ttl) {
-            let _ = tx.send((key.to_string(), ttl));
+        if let Some(tx) = &self.tti_tx {
+            let _ = tx.send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
         }
 
         Ok(Some(entry.value.clone_ref(py)))
@@ -242,7 +292,10 @@ impl Core {
         value: Py<PyAny>,
         dependencies: Vec<String>,
         ttl: Option<u64>,
-    ) {
+    ) -> PyResult<()> {
+        for tag in &dependencies {
+            validate_tag(tag)?;
+        }
         let trie_version = self.trie.get_global_version();
         let snapshots = py.detach(|| build_dependency_snapshots(&self.trie, dependencies));
         let entry = Arc::new(CacheEntry {
@@ -253,33 +306,45 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let final_ttl = ttl.or(self.default_ttl);
 
-        py.detach(|| {
-            storage.set(key, entry, final_ttl);
+        py.detach(|| -> PyResult<()> {
+            storage.set(key, entry, final_ttl)?;
 
             if let Some(max) = self.max_entries {
                 let current = storage.len();
                 if current > max {
                     let to_evict = current - max + (max / 10).max(1);
-                    storage.evict_lru(to_evict);
+                    storage.evict_lru(to_evict)?;
                     self.trie.prune(0);
                 }
             }
-        });
+            Ok(())
+        })?;
+        Ok(())
     }
 
-    fn invalidate(&self, py: Python, tag: &str) {
+    fn invalidate(&self, py: Python, tag: &str) -> PyResult<()> {
+        validate_tag(tag)?;
         py.detach(|| {
             let new_ver = self.trie.invalidate(tag);
             self.bus.publish(tag, new_ver);
         });
+        Ok(())
     }
 
-    fn clear(&self, py: Python) {
+    fn clear(&self, py: Python) -> PyResult<()> {
         let storage = Arc::clone(&self.storage);
-        py.detach(|| {
-            storage.clear();
+        py.detach(|| -> PyResult<()> {
+            storage.clear()?;
             self.trie.clear();
-        });
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn request_prune(&self, max_age_secs: u64) {
+        if let Some(tx) = &self.tti_tx {
+            let _ = tx.send(WorkerMsg::Prune(max_age_secs));
+        }
     }
 
     fn prune(&self, max_age_secs: u64) {
@@ -288,6 +353,10 @@ impl Core {
 
     fn tag_version(&self, tag: &str) -> u64 {
         self.trie.get_tag_version(tag)
+    }
+
+    fn len(&self) -> usize {
+        self.storage.len()
     }
 
     fn version(&self) -> String {
@@ -320,5 +389,7 @@ fn hash_key(_py: Python<'_>, obj: Bound<'_, PyAny>, prefix: Option<&str>) -> PyR
 fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Core>()?;
     m.add_function(wrap_pyfunction!(hash_key, m)?)?;
+    m.add("InvalidTag", m.py().get_type::<InvalidTag>())?;
     Ok(())
 }
+

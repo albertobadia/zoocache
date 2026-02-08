@@ -1,21 +1,46 @@
 import functools
 import asyncio
 import inspect
-from typing import Any, Callable, Optional, Dict
-from ._zoocache import Core
+from typing import Any, Callable, Optional, Dict, Union, Iterable
+from ._zoocache import Core, hash_key
 from .context import DepsTracker, get_current_deps
 
 
-_core: Optional[Core] = None
-_config: Dict[str, Any] = {}
-_op_counter: int = 0
+PRUNE_CHECK_INTERVAL = 1000
 
 
-def _reset() -> None:
-    global _core, _config, _op_counter
-    _core = None
-    _config = {}
-    _op_counter = 0
+class CacheManager:
+    def __init__(self):
+        self.core: Optional[Core] = None
+        self.config: Dict[str, Any] = {}
+        self._op_count: int = 0
+
+    def configure(self, **kwargs) -> None:
+        if self.core is not None:
+            raise RuntimeError("zoocache already initialized")
+        self.config = kwargs
+
+    def get_core(self) -> Core:
+        if self.core is None:
+            core_args = {k: v for k, v in self.config.items() if k != "prune_after"}
+            self.core = Core(**core_args)
+        return self.core
+
+    def maybe_prune(self) -> None:
+        self._op_count += 1
+        if self._op_count >= PRUNE_CHECK_INTERVAL:
+            self._op_count = 0
+            if age := self.config.get("prune_after"):
+                core = self.get_core()
+                core.request_prune(age)
+
+    def reset(self) -> None:
+        self.core = None
+        self.config = {}
+        self._op_count = 0
+
+
+_manager = CacheManager()
 
 
 def configure(
@@ -27,119 +52,109 @@ def configure(
     read_extend_ttl: bool = True,
     max_entries: Optional[int] = None,
 ) -> None:
-    global _core, _config
-    if _core is not None:
-        raise RuntimeError("zoocache already initialized")
-    _config = {
-        "storage_url": storage_url,
-        "bus_url": bus_url,
-        "prefix": prefix,
-        "prune_after": prune_after,
-        "default_ttl": default_ttl,
-        "read_extend_ttl": read_extend_ttl,
-        "max_entries": max_entries,
-    }
-
-
-def _get_core() -> Core:
-    global _core
-    if _core is None:
-        core_args = {k: v for k, v in _config.items() if k != "prune_after"}
-        _core = Core(**core_args)
-    return _core
-
-
-def _maybe_prune() -> None:
-    global _op_counter
-    _op_counter += 1
-    if _op_counter >= 1000:
-        _op_counter = 0
-        if age := _config.get("prune_after"):
-            prune(age)
+    _manager.configure(
+        storage_url=storage_url,
+        bus_url=bus_url,
+        prefix=prefix,
+        prune_after=prune_after,
+        default_ttl=default_ttl,
+        read_extend_ttl=read_extend_ttl,
+        max_entries=max_entries,
+    )
 
 
 def prune(max_age_secs: int = 3600) -> None:
-    _get_core().prune(max_age_secs)
+    _manager.get_core().prune(max_age_secs)
+
+
+def clear() -> None:
+    _manager.get_core().clear()
+
+
+def invalidate(tag: str) -> None:
+    _manager.get_core().invalidate(tag)
+
+
+def version() -> str:
+    return _manager.get_core().version()
 
 
 def _generate_key(
     func: Callable, namespace: Optional[str], args: tuple, kwargs: dict
 ) -> str:
-    from ._zoocache import hash_key
-
     obj = (func.__module__, func.__qualname__, args, sorted(kwargs.items()))
     prefix = f"{namespace}:{func.__name__}" if namespace else func.__name__
     return hash_key(obj, prefix)
 
 
-def clear() -> None:
-    _get_core().clear()
-
-
-def _collect_deps(deps: Any, args: tuple, kwargs: dict) -> list[str]:
+def _collect_deps(
+    deps: Optional[Union[Callable, Iterable[str]]], args: tuple, kwargs: dict
+) -> list[str]:
     base = list(get_current_deps() or [])
     extra = (deps(*args, **kwargs) if callable(deps) else deps) if deps else []
     return list(set(base + list(extra)))
 
 
-def invalidate(tag: str) -> None:
-    _get_core().invalidate(tag)
-
-
 def cacheable(
-    namespace: Optional[str] = None, deps: Any = None, ttl: Optional[int] = None
+    namespace: Optional[str] = None,
+    deps: Optional[Union[Callable, Iterable[str]]] = None,
+    ttl: Optional[int] = None,
 ):
     def decorator(func: Callable):
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
+            core = _manager.get_core()
             key = _generate_key(func, namespace, args, kwargs)
-            _maybe_prune()
+            _manager.maybe_prune()
 
-            val, is_leader, fut = _get_core().get_or_entry_async(key)
-            if val is not None:
-                return val
+            while True:
+                val, is_leader, fut = core.get_or_entry_async(key)
+                if val is not None:
+                    return val
 
-            if is_leader:
-                leader_fut = asyncio.get_running_loop().create_future()
-                _get_core().register_flight_future(key, leader_fut)
-                try:
-                    res = await execute(key, args, kwargs)
-                    _get_core().finish_flight(key, False, res)
-                    leader_fut.set_result(res)
-                    return res
-                except Exception as e:
-                    _get_core().finish_flight(key, True, None)
-                    leader_fut.set_exception(e)
-                    raise
+                if is_leader:
+                    break
 
-            if fut is not None:
-                return await fut
+                if fut is not None:
+                    return await fut
 
-            return await execute(key, args, kwargs)
+                # Follower, but future not ready yet (race condition).
+                # Yield and retry.
+                await asyncio.sleep(0)
 
-        async def execute(key, args, kwargs):
-            with DepsTracker():
-                res = await func(*args, **kwargs)
-                _get_core().set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
-            return res
+            # Executive logic for leader
+            leader_fut = asyncio.get_running_loop().create_future()
+            core.register_flight_future(key, leader_fut)
+            try:
+                with DepsTracker():
+                    res = await func(*args, **kwargs)
+                    core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                core.finish_flight(key, False, res)
+                leader_fut.set_result(res)
+                return res
+            except Exception as e:
+                core.finish_flight(key, True, None)
+                leader_fut.set_exception(e)
+                raise
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
+            core = _manager.get_core()
             key = _generate_key(func, namespace, args, kwargs)
-            _maybe_prune()
-            val, is_leader = _get_core().get_or_entry(key)
+            _manager.maybe_prune()
+
+            val, is_leader = core.get_or_entry(key)
             if not is_leader:
                 return val
+
             try:
                 with DepsTracker():
                     res = func(*args, **kwargs)
-                    _get_core().set(
-                        key, res, _collect_deps(deps, args, kwargs), ttl=ttl
-                    )
-                _get_core().finish_flight(key, False, res)
+                    core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                core.finish_flight(key, False, res)
                 return res
             except Exception:
-                _get_core().finish_flight(key, True, None)
+                core.finish_flight(key, True, None)
                 raise
 
         return async_wrapper if inspect.iscoroutinefunction(func) else sync_wrapper
@@ -147,5 +162,5 @@ def cacheable(
     return decorator
 
 
-def version() -> str:
-    return _get_core().version()
+def _reset() -> None:
+    _manager.reset()

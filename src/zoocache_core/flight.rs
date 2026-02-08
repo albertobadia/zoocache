@@ -45,7 +45,7 @@ pub(crate) fn complete_flight(
     value: Option<Py<PyAny>>,
 ) -> Option<Py<PyAny>> {
     if let Some((_, flight)) = flights.remove(key) {
-        let mut state = flight.state.lock().unwrap();
+        let mut state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
         state.0 = if is_error {
             FlightStatus::Error
         } else {
@@ -53,13 +53,22 @@ pub(crate) fn complete_flight(
         };
         state.1 = value;
         flight.condvar.notify_all();
-        return flight.py_future.lock().unwrap().take();
+
+        return flight
+            .py_future
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
     }
     None
 }
 
 pub(crate) fn wait_for_flight(flight: &Flight) -> FlightStatus {
-    let mut state = flight.state.lock().unwrap();
+    let mut state = match flight.state.lock() {
+        Ok(s) => s,
+        Err(_e) => return FlightStatus::Error, // Poisoned
+    };
+
     let timeout = std::time::Duration::from_secs(60);
     let start = std::time::Instant::now();
 
@@ -68,13 +77,17 @@ pub(crate) fn wait_for_flight(flight: &Flight) -> FlightStatus {
         if elapsed >= timeout {
             return FlightStatus::Error;
         }
-        let (new_state, result) = flight
-            .condvar
-            .wait_timeout(state, timeout - elapsed)
-            .unwrap();
-        state = new_state;
-        if result.timed_out() {
-            return FlightStatus::Error;
+
+        let wait_res = flight.condvar.wait_timeout(state, timeout - elapsed);
+
+        match wait_res {
+            Ok((new_state, result)) => {
+                state = new_state;
+                if result.timed_out() {
+                    return FlightStatus::Error;
+                }
+            }
+            Err(_) => return FlightStatus::Error, // Poisoned
         }
     }
     state.0

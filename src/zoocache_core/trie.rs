@@ -35,24 +35,9 @@ impl PrefixTrie {
     #[inline]
     pub fn invalidate(&self, tag: &str) -> u64 {
         self.global_version.fetch_add(1, Ordering::SeqCst);
-        let mut current = Arc::clone(&self.root);
-        current.touch();
-        for part in tag.split(':') {
-            let next = if let Some(n) = current.children.get(part) {
-                Arc::clone(n.value())
-            } else {
-                let entry = current
-                    .children
-                    .entry(part.to_string())
-                    .or_insert_with(|| Arc::new(TrieNode::default()));
-                Arc::clone(entry.value())
-            };
-            current = next;
-            current.touch();
-        }
+        let current = self.traverse_and_touch(tag);
 
         let now = now_nanos();
-
         let prev = current
             .version
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
@@ -66,21 +51,7 @@ impl PrefixTrie {
     #[inline]
     pub fn set_min_version(&self, tag: &str, version: u64) {
         self.global_version.fetch_add(1, Ordering::SeqCst);
-        let mut current = Arc::clone(&self.root);
-        current.touch();
-        for part in tag.split(':') {
-            let next = if let Some(n) = current.children.get(part) {
-                Arc::clone(n.value())
-            } else {
-                let entry = current
-                    .children
-                    .entry(part.to_string())
-                    .or_insert_with(|| Arc::new(TrieNode::default()));
-                Arc::clone(entry.value())
-            };
-            current = next;
-            current.touch();
-        }
+        let current = self.traverse_and_touch(tag);
         current.version.fetch_max(version, Ordering::SeqCst);
     }
 
@@ -138,15 +109,7 @@ impl PrefixTrie {
             .fetch_max(snapshot_versions[0], Ordering::SeqCst);
 
         for (i, part) in parts.iter().enumerate() {
-            let next = if let Some(n) = current.children.get(part.as_ref()) {
-                Arc::clone(n.value())
-            } else {
-                let entry = current
-                    .children
-                    .entry(part.as_ref().to_string())
-                    .or_insert_with(|| Arc::new(TrieNode::default()));
-                Arc::clone(entry.value())
-            };
+            let next = self.get_or_create_child(&current, part.as_ref());
             current = next;
             current.touch();
             current
@@ -189,6 +152,29 @@ impl PrefixTrie {
         let age = now.saturating_sub(last);
 
         node.children.is_empty() && age > max_age_secs
+    }
+
+    fn traverse_and_touch(&self, tag: &str) -> Arc<TrieNode> {
+        let mut current = Arc::clone(&self.root);
+        current.touch();
+        for part in tag.split(':') {
+            let next = self.get_or_create_child(&current, part);
+            current = next;
+            current.touch();
+        }
+        current
+    }
+
+    fn get_or_create_child(&self, parent: &Arc<TrieNode>, part: &str) -> Arc<TrieNode> {
+        if let Some(n) = parent.children.get(part) {
+            Arc::clone(n.value())
+        } else {
+            let entry = parent
+                .children
+                .entry(part.to_string())
+                .or_insert_with(|| Arc::new(TrieNode::default()));
+            Arc::clone(entry.value())
+        }
     }
 }
 

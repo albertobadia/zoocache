@@ -1,7 +1,7 @@
 # ADR 0005: SingleFlight Pattern for Thundering Herd Protection
 
 ## Status
-Accepted
+Accepted (Superseded by ADR 0009 regarding failure handling)
 
 ## Context
 Under high concurrency, many requests for the same stale/missing key can hit the backend simultaneously, potentially causing a service collapse.
