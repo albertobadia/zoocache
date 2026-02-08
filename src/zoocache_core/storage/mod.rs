@@ -44,18 +44,14 @@ impl CacheEntry {
             trie_version: self.trie_version,
         };
 
-        let packed = rmp_serde::to_vec(&entry)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
+        let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
         Ok(compress_prepend_size(&packed))
     }
 
     pub fn deserialize(py: Python, data: &[u8]) -> PyResult<Self> {
-        let decompressed = decompress_size_prepended(data)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        let entry: SerializableCacheEntry = rmp_serde::from_slice(&decompressed)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let decompressed = decompress_size_prepended(data).map_err(to_runtime_err)?;
+        let entry: SerializableCacheEntry =
+            rmp_serde::from_slice(&decompressed).map_err(to_runtime_err)?;
 
         let mut deserializer = rmp_serde::decode::Deserializer::new(&entry.value[..]);
         let transcoder = serde_transcode::Transcoder::new(&mut deserializer);
@@ -69,6 +65,10 @@ impl CacheEntry {
             trie_version: entry.trie_version,
         })
     }
+}
+
+fn to_runtime_err<E: std::fmt::Display>(e: E) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
 }
 
 pub(crate) trait Storage: Send + Sync {

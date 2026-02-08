@@ -46,15 +46,10 @@ impl Core {
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
-                Arc::new(RedisStorage::new(url, prefix).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
-                })?)
+                Arc::new(RedisStorage::new(url, prefix).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
-                let path = &url[7..];
-                Arc::new(LmdbStorage::new(path).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?)
+                Arc::new(LmdbStorage::new(&url[7..]).map_err(to_runtime_err)?)
             }
             Some(url) => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -71,9 +66,7 @@ impl Core {
             Some(url) => {
                 let channel = prefix.map(|p| format!("{}:invalidate", p));
                 let r_bus =
-                    Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
-                    })?);
+                    Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(to_conn_err)?);
 
                 let t_clone = trie.clone();
                 r_bus.start_listener(move |tag, ver| {
@@ -90,33 +83,34 @@ impl Core {
             let storage_worker = Arc::clone(&storage);
 
             thread::spawn(move || {
-                let mut last_touches: HashMap<String, Instant> = HashMap::new();
-                let mut batch: HashMap<String, Option<u64>> = HashMap::new();
+                let mut last_touches = HashMap::<String, Instant>::new();
+                let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
 
-                loop {
-                    let msg = rx.recv_timeout(Duration::from_secs(1));
-
-                    if let Ok((key, ttl)) = &msg {
-                        let now = Instant::now();
+                while let Ok((key, ttl)) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
+                    if e == mpsc::RecvTimeoutError::Timeout {
+                        Ok((String::new(), None))
+                    } else {
+                        Err(e)
+                    }
+                }) {
+                    let now = Instant::now();
+                    if !key.is_empty() {
                         if last_touches
-                            .get(key)
+                            .get(&key)
                             .is_some_and(|&last| now.duration_since(last) < Duration::from_secs(30))
                         {
                             continue;
                         }
-
-                        batch.insert(key.clone(), *ttl);
-                        last_touches.insert(key.clone(), now);
+                        batch.insert(key.clone(), ttl);
+                        last_touches.insert(key, now);
                     }
 
-                    let now = Instant::now();
                     if (batch.len() >= 1000
                         || now.duration_since(last_flush) > Duration::from_secs(30))
                         && !batch.is_empty()
                     {
-                        let updates: Vec<(String, Option<u64>)> = batch.drain().collect();
-                        storage_worker.touch_batch(updates);
+                        storage_worker.touch_batch(batch.drain().collect());
                         last_flush = now;
                     }
 
@@ -124,10 +118,6 @@ impl Core {
                         last_touches.retain(|_, &mut instant| {
                             now.duration_since(instant) < Duration::from_secs(300)
                         });
-                    }
-
-                    if let Err(mpsc::RecvTimeoutError::Disconnected) = msg {
-                        break;
                     }
                 }
             });
@@ -342,4 +332,12 @@ fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Core>()?;
     m.add_function(wrap_pyfunction!(hash_key, m)?)?;
     Ok(())
+}
+
+fn to_conn_err<E: std::fmt::Display>(e: E) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
+}
+
+fn to_runtime_err<E: std::fmt::Display>(e: E) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
 }

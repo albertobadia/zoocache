@@ -48,22 +48,17 @@ impl Storage for RedisStorage {
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) {
-        let Ok(mut conn) = self.pool.get() else {
-            return;
+        let mut conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(_) => return,
         };
 
-        let data = Python::attach(|py| entry.serialize(py).ok());
-
-        if let Some(data) = data {
+        if let Some(data) = Python::attach(|py| entry.serialize(py).ok()) {
             let full_key = self.full_key(&key);
-            match ttl {
-                Some(t) => {
-                    let _: redis::RedisResult<()> = conn.set_ex(full_key, data, t);
-                }
-                None => {
-                    let _: redis::RedisResult<()> = conn.set(full_key, data);
-                }
-            }
+            let _: redis::RedisResult<()> = match ttl {
+                Some(t) => conn.set_ex(full_key, data, t),
+                None => conn.set(full_key, data),
+            };
             let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), &key, now_secs() as f64);
         }
     }
@@ -129,15 +124,12 @@ impl Storage for RedisStorage {
 
     fn evict_lru(&self, count: usize) -> Vec<String> {
         let Ok(mut conn) = self.pool.get() else {
-            return vec![];
+            return Vec::new();
         };
 
-        let keys: redis::RedisResult<Vec<String>> = conn.zpopmin(self.lru_key(), count as isize);
-        let keys = match keys {
-            Ok(k) => k,
-            Err(_) => return vec![],
-        };
-
+        let keys: Vec<String> = conn
+            .zpopmin(self.lru_key(), count as isize)
+            .unwrap_or_default();
         let to_evict: Vec<String> = keys.into_iter().step_by(2).collect();
 
         if !to_evict.is_empty() {

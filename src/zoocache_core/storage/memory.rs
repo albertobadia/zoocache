@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::{CacheEntry, Storage};
 
 pub(crate) struct InMemoryStorage {
-    map: DashMap<String, (Arc<CacheEntry>, Option<u64>, u64)>, // (entry, expires_at, last_accessed)
+    map: DashMap<String, (Arc<CacheEntry>, Option<u64>, u64)>,
 }
 
 impl InMemoryStorage {
@@ -22,9 +22,7 @@ impl Storage for InMemoryStorage {
         let mut entry = self.map.get_mut(key)?;
         let (val, expires_at, last_accessed) = entry.value_mut();
 
-        if let Some(expires) = expires_at
-            && now_secs() > *expires
-        {
+        if expires_at.is_some_and(|expires| now_secs() > expires) {
             drop(entry);
             self.map.remove(key);
             return None;
