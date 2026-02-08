@@ -7,20 +7,16 @@ _DEPS_CONTEXT: ContextVar[Optional[Set[str]]] = ContextVar(
 
 
 def add_deps(deps: list[str]) -> None:
-    """Register dynamic dependencies for the current @cacheable call."""
     ctx = _DEPS_CONTEXT.get()
     if ctx is not None:
         ctx.update(deps)
 
 
 def get_current_deps() -> Optional[Set[str]]:
-    """Get the dependency set for the current context."""
     return _DEPS_CONTEXT.get()
 
 
 class DepsTracker:
-    """Context manager to track dynamic dependencies."""
-
     def __init__(self):
         self.deps: Set[str] = set()
         self.token = None

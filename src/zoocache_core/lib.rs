@@ -19,6 +19,11 @@ use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
 
+enum WorkerMsg {
+    Touch(String, Option<u64>),
+    Prune(u64),
+}
+
 #[pyclass]
 struct Core {
     storage: Arc<dyn Storage>,
@@ -29,7 +34,7 @@ struct Core {
     max_entries: Option<usize>,
     #[allow(dead_code)]
     read_extend_ttl: bool,
-    tti_tx: Option<Sender<(String, Option<u64>)>>,
+    tti_tx: Option<Sender<WorkerMsg>>,
 }
 
 #[pymethods]
@@ -79,31 +84,39 @@ impl Core {
 
         let mut tti_tx = None;
         if read_extend_ttl {
-            let (tx, rx) = mpsc::channel::<(String, Option<u64>)>();
+            let (tx, rx) = mpsc::channel::<WorkerMsg>();
             let storage_worker = Arc::clone(&storage);
+            let trie_worker = trie.clone();
 
             thread::spawn(move || {
                 let mut last_touches = HashMap::<String, Instant>::new();
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
 
-                while let Ok((key, ttl)) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
+                while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
                     if e == mpsc::RecvTimeoutError::Timeout {
-                        Ok((String::new(), None))
+                        // Empty message to trigger periodic flush
+                        Ok(WorkerMsg::Touch(String::new(), None))
                     } else {
                         Err(e)
                     }
                 }) {
                     let now = Instant::now();
-                    if !key.is_empty() {
-                        if last_touches
-                            .get(&key)
-                            .is_some_and(|&last| now.duration_since(last) < Duration::from_secs(30))
-                        {
-                            continue;
+                    match msg {
+                        WorkerMsg::Touch(key, ttl) => {
+                            if !key.is_empty() {
+                                if last_touches.get(&key).is_some_and(|&last| {
+                                    now.duration_since(last) < Duration::from_secs(30)
+                                }) {
+                                    continue;
+                                }
+                                batch.insert(key.clone(), ttl);
+                                last_touches.insert(key, now);
+                            }
                         }
-                        batch.insert(key.clone(), ttl);
-                        last_touches.insert(key, now);
+                        WorkerMsg::Prune(max_age) => {
+                            trie_worker.prune(max_age);
+                        }
                     }
 
                     if (batch.len() >= 1000
@@ -239,7 +252,7 @@ impl Core {
         }
 
         if let Some(tx) = &self.tti_tx {
-            let _ = tx.send((key.to_string(), self.default_ttl));
+            let _ = tx.send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
         }
 
         Ok(Some(entry.value.clone_ref(py)))
@@ -291,6 +304,12 @@ impl Core {
             storage.clear();
             self.trie.clear();
         });
+    }
+
+    fn request_prune(&self, max_age_secs: u64) {
+        if let Some(tx) = &self.tti_tx {
+            let _ = tx.send(WorkerMsg::Prune(max_age_secs));
+        }
     }
 
     fn prune(&self, max_age_secs: u64) {
