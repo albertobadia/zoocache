@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::trie::DepSnapshot;
+use crate::utils::to_runtime_err;
 
 #[derive(Serialize, Deserialize)]
 struct SerializableCacheEntry {
@@ -65,10 +66,6 @@ impl CacheEntry {
             trie_version: entry.trie_version,
         })
     }
-}
-
-fn to_runtime_err<E: std::fmt::Display>(e: E) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
 }
 
 pub(crate) trait Storage: Send + Sync {

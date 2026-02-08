@@ -6,11 +6,14 @@ from ._zoocache import Core, hash_key
 from .context import DepsTracker, get_current_deps
 
 
+PRUNE_CHECK_INTERVAL = 1000
+
+
 class CacheManager:
     def __init__(self):
         self.core: Optional[Core] = None
         self.config: Dict[str, Any] = {}
-        self.op_counter: int = 0
+        self._op_count: int = 0
 
     def configure(self, **kwargs) -> None:
         if self.core is not None:
@@ -24,16 +27,17 @@ class CacheManager:
         return self.core
 
     def maybe_prune(self) -> None:
-        self.op_counter += 1
-        if self.op_counter >= 1000:
-            self.op_counter = 0
+        self._op_count += 1
+        if self._op_count >= PRUNE_CHECK_INTERVAL:
+            self._op_count = 0
             if age := self.config.get("prune_after"):
-                self.get_core().request_prune(age)
+                core = self.get_core()
+                core.request_prune(age)
 
     def reset(self) -> None:
         self.core = None
         self.config = {}
-        self.op_counter = 0
+        self._op_count = 0
 
 
 _manager = CacheManager()

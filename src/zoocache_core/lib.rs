@@ -49,8 +49,6 @@ struct Core {
     flights: DashMap<String, Arc<Flight>>,
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
-    #[allow(dead_code)]
-    read_extend_ttl: bool,
     tti_tx: Option<Sender<WorkerMsg>>,
 }
 
@@ -161,7 +159,6 @@ impl Core {
             flights: DashMap::new(),
             default_ttl,
             max_entries,
-            read_extend_ttl,
             tti_tx,
         })
     }
@@ -181,7 +178,7 @@ impl Core {
 
         match status {
             FlightStatus::Done => {
-                let state = flight.state.lock().unwrap();
+                let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
                 Ok((state.1.as_ref().map(|obj| obj.clone_ref(py)), false))
             }
             FlightStatus::Error => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -210,7 +207,7 @@ impl Core {
         let fut = flight
             .py_future
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|f| f.clone_ref(py));
         Ok((None, false, fut))
@@ -218,7 +215,7 @@ impl Core {
 
     fn register_flight_future(&self, key: &str, future: Py<PyAny>) {
         if let Some(flight) = self.flights.get(key) {
-            let mut fut_guard = flight.py_future.lock().unwrap();
+            let mut fut_guard = flight.py_future.lock().unwrap_or_else(|e| e.into_inner());
             *fut_guard = Some(future);
         }
     }
@@ -380,10 +377,6 @@ fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn to_conn_err<E: std::fmt::Display>(e: E) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
-}
+use crate::utils::to_conn_err;
 
-fn to_runtime_err<E: std::fmt::Display>(e: E) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-}
+use crate::utils::to_runtime_err;

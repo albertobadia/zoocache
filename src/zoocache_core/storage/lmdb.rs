@@ -1,5 +1,5 @@
 use crate::storage::{CacheEntry, Storage};
-use crate::utils::now_secs;
+use crate::utils::{now_secs, to_runtime_err};
 use lmdb::{Cursor, Database, DatabaseFlags, Environment, Transaction, WriteFlags};
 use pyo3::prelude::*;
 use std::path::Path;
@@ -32,19 +32,19 @@ impl LmdbStorage {
 
         let db_main = env
             .create_db(Some("main"), DatabaseFlags::empty())
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
         let db_ttls = env
             .create_db(Some("ttls"), DatabaseFlags::empty())
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
         let db_lru = env
             .create_db(Some("lru"), DatabaseFlags::empty())
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
         let db_lru_index = env
             .create_db(Some("lru_index"), DatabaseFlags::empty())
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
         let db_meta = env
             .create_db(Some("meta"), DatabaseFlags::empty())
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
 
         let count = (|| {
             let txn = env.begin_ro_txn().ok()?;
@@ -97,10 +97,6 @@ impl LmdbStorage {
     }
 }
 
-fn to_py_err(e: lmdb::Error) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-}
-
 impl Storage for LmdbStorage {
     fn get(&self, key: &str) -> Option<Arc<CacheEntry>> {
         let txn = self.env.begin_ro_txn().ok()?;
@@ -128,28 +124,28 @@ impl Storage for LmdbStorage {
         }
         let data = data.unwrap();
 
-        let mut txn = self.env.begin_rw_txn().map_err(to_py_err)?;
+        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
         self.delete_from_index(&mut txn, &key);
 
         let is_new = txn.get(self.db_main, &key).is_err();
         let new_ts = now_secs();
 
         txn.put(self.db_main, &key, &data, WriteFlags::empty())
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
         txn.put(
             self.db_lru,
             &key,
             &new_ts.to_le_bytes(),
             WriteFlags::empty(),
         )
-        .map_err(to_py_err)?;
+        .map_err(to_runtime_err)?;
         txn.put(
             self.db_lru_index,
             &Self::make_index_key(new_ts, &key),
             &[],
             WriteFlags::empty(),
         )
-        .map_err(to_py_err)?;
+        .map_err(to_runtime_err)?;
 
         if let Some(t) = ttl {
             let expire_at = now_secs() + t;
@@ -159,7 +155,7 @@ impl Storage for LmdbStorage {
                 &expire_at.to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
         } else {
             let _ = txn.del(self.db_ttls, &key, None);
         }
@@ -173,10 +169,10 @@ impl Storage for LmdbStorage {
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
         }
 
-        txn.commit().map_err(to_py_err)?;
+        txn.commit().map_err(to_runtime_err)?;
 
         if is_new {
             self.count.fetch_add(1, Ordering::SeqCst);
@@ -185,21 +181,21 @@ impl Storage for LmdbStorage {
     }
 
     fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
-        let mut txn = self.env.begin_rw_txn().map_err(to_py_err)?;
+        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
         let now = now_secs();
         let now_le = now.to_le_bytes();
         for (key, ttl) in updates {
             self.delete_from_index(&mut txn, &key);
 
             txn.put(self.db_lru, &key, &now_le, WriteFlags::empty())
-                .map_err(to_py_err)?;
+                .map_err(to_runtime_err)?;
             txn.put(
                 self.db_lru_index,
                 &Self::make_index_key(now, &key),
                 &[],
                 WriteFlags::empty(),
             )
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
 
             if let Some(t) = ttl {
                 let expire_at = now + t;
@@ -209,14 +205,14 @@ impl Storage for LmdbStorage {
                     &expire_at.to_le_bytes(),
                     WriteFlags::empty(),
                 )
-                .map_err(to_py_err)?;
+                .map_err(to_runtime_err)?;
             }
         }
-        txn.commit().map_err(to_py_err)
+        txn.commit().map_err(to_runtime_err)
     }
 
     fn remove(&self, key: &str) -> PyResult<()> {
-        let mut txn = self.env.begin_rw_txn().map_err(to_py_err)?;
+        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
         if self.remove_internal(&mut txn, key) {
             let current_count = self.count.load(Ordering::SeqCst);
             let new_count = current_count.saturating_sub(1);
@@ -226,22 +222,22 @@ impl Storage for LmdbStorage {
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_py_err)?;
+            .map_err(to_runtime_err)?;
 
-            txn.commit().map_err(to_py_err)?;
+            txn.commit().map_err(to_runtime_err)?;
             self.count.fetch_sub(1, Ordering::SeqCst);
         }
         Ok(())
     }
 
     fn clear(&self) -> PyResult<()> {
-        let mut txn = self.env.begin_rw_txn().map_err(to_py_err)?;
+        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
         let _ = txn.clear_db(self.db_main);
         let _ = txn.clear_db(self.db_ttls);
         let _ = txn.clear_db(self.db_lru);
         let _ = txn.clear_db(self.db_lru_index);
         let _ = txn.clear_db(self.db_meta);
-        txn.commit().map_err(to_py_err)?;
+        txn.commit().map_err(to_runtime_err)?;
         self.count.store(0, Ordering::SeqCst);
         Ok(())
     }
@@ -253,9 +249,11 @@ impl Storage for LmdbStorage {
     fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
         let mut to_evict = Vec::new();
 
-        let mut txn = self.env.begin_rw_txn().map_err(to_py_err)?;
+        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
         {
-            let mut cursor = txn.open_ro_cursor(self.db_lru_index).map_err(to_py_err)?;
+            let mut cursor = txn
+                .open_ro_cursor(self.db_lru_index)
+                .map_err(to_runtime_err)?;
             for (k, _) in cursor.iter().take(count) {
                 if let Some(key_str) = k.get(8..).and_then(|b| std::str::from_utf8(b).ok()) {
                     to_evict.push(key_str.to_string());
@@ -278,9 +276,9 @@ impl Storage for LmdbStorage {
             &(new_count as u64).to_le_bytes(),
             WriteFlags::empty(),
         )
-        .map_err(to_py_err)?;
+        .map_err(to_runtime_err)?;
 
-        txn.commit().map_err(to_py_err)?;
+        txn.commit().map_err(to_runtime_err)?;
         self.count.fetch_sub(evicted_count, Ordering::SeqCst);
 
         Ok(to_evict)

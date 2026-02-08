@@ -136,6 +136,4 @@ impl Storage for RedisStorage {
     }
 }
 
-fn to_conn_err<E: std::fmt::Display>(e: E) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
-}
+use crate::utils::to_conn_err;
