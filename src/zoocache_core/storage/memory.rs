@@ -86,7 +86,7 @@ impl Storage for InMemoryStorage {
         }
 
         entries.select_nth_unstable_by_key(count - 1, |(_, ts)| *ts);
-        
+
         // After partitioning, the first `count` elements are the oldest (smallest timestamp)
         let to_evict: Vec<String> = entries.drain(..count).map(|(k, _)| k).collect();
 

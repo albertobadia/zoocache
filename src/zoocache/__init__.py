@@ -1,4 +1,5 @@
 from .core import cacheable, invalidate, version, clear, configure, prune, _reset
+from ._zoocache import InvalidTag
 from .context import add_deps
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "configure",
     "prune",
     "_reset",
+    "InvalidTag",
 ]

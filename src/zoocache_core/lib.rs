@@ -19,6 +19,23 @@ use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
 
+pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
+
+fn validate_tag(tag: &str) -> PyResult<()> {
+    for c in tag.chars() {
+        if !c.is_alphanumeric() && c != '_' && c != ':' {
+            return Err(InvalidTag::new_err(format!(
+                "Invalid character '{}' in tag '{}'. Only alphanumeric, '_' and ':' are allowed.",
+                c, tag
+            )));
+        }
+    }
+    if tag.is_empty() {
+        return Err(InvalidTag::new_err("Tag cannot be empty"));
+    }
+    Ok(())
+}
+
 enum WorkerMsg {
     Touch(String, Option<u64>),
     Prune(u64),
@@ -267,6 +284,9 @@ impl Core {
         dependencies: Vec<String>,
         ttl: Option<u64>,
     ) -> PyResult<()> {
+        for tag in &dependencies {
+            validate_tag(tag)?;
+        }
         let trie_version = self.trie.get_global_version();
         let snapshots = py.detach(|| build_dependency_snapshots(&self.trie, dependencies));
         let entry = Arc::new(CacheEntry {
@@ -293,11 +313,13 @@ impl Core {
         Ok(())
     }
 
-    fn invalidate(&self, py: Python, tag: &str) {
+    fn invalidate(&self, py: Python, tag: &str) -> PyResult<()> {
+        validate_tag(tag)?;
         py.detach(|| {
             let new_ver = self.trie.invalidate(tag);
             self.bus.publish(tag, new_ver);
         });
+        Ok(())
     }
 
     fn clear(&self, py: Python) -> PyResult<()> {
@@ -354,6 +376,7 @@ fn hash_key(_py: Python<'_>, obj: Bound<'_, PyAny>, prefix: Option<&str>) -> PyR
 fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Core>()?;
     m.add_function(wrap_pyfunction!(hash_key, m)?)?;
+    m.add("InvalidTag", m.py().get_type::<InvalidTag>())?;
     Ok(())
 }
 
