@@ -47,11 +47,8 @@ impl Storage for RedisStorage {
         result
     }
 
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) {
-        let mut conn = match self.pool.get() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
 
         if let Some(data) = Python::attach(|py| entry.serialize(py).ok()) {
             let full_key = self.full_key(&key);
@@ -61,31 +58,30 @@ impl Storage for RedisStorage {
             };
             let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), &key, now_secs() as f64);
         }
+        Ok(())
     }
 
-    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) {
-        if let Ok(mut conn) = self.pool.get() {
-            let now = now_secs() as f64;
-            for (key, ttl) in updates {
-                if let Some(t) = ttl {
-                    let _: redis::RedisResult<()> = conn.expire(self.full_key(&key), t as i64);
-                }
-                let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), &key, now);
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
+        let now = now_secs() as f64;
+        for (key, ttl) in updates {
+            if let Some(t) = ttl {
+                let _: redis::RedisResult<()> = conn.expire(self.full_key(&key), t as i64);
             }
+            let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), &key, now);
         }
+        Ok(())
     }
 
-    fn remove(&self, key: &str) {
-        if let Ok(mut conn) = self.pool.get() {
-            let _: redis::RedisResult<()> = conn.del(self.full_key(key));
-            let _: redis::RedisResult<()> = conn.zrem(self.lru_key(), key);
-        }
+    fn remove(&self, key: &str) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
+        let _: redis::RedisResult<()> = conn.del(self.full_key(key));
+        let _: redis::RedisResult<()> = conn.zrem(self.lru_key(), key);
+        Ok(())
     }
 
-    fn clear(&self) {
-        let Ok(mut conn) = self.pool.get() else {
-            return;
-        };
+    fn clear(&self) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
         let pattern = format!("{}:*", self.prefix);
         let mut cursor: u64 = 0;
 
@@ -112,6 +108,7 @@ impl Storage for RedisStorage {
                 Err(_) => break,
             }
         }
+        Ok(())
     }
 
     fn len(&self) -> usize {
@@ -122,10 +119,8 @@ impl Storage for RedisStorage {
         count.unwrap_or(0)
     }
 
-    fn evict_lru(&self, count: usize) -> Vec<String> {
-        let Ok(mut conn) = self.pool.get() else {
-            return Vec::new();
-        };
+    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
 
         let keys: Vec<String> = conn
             .zpopmin(self.lru_key(), count as isize)
@@ -137,6 +132,10 @@ impl Storage for RedisStorage {
             let _: redis::RedisResult<()> = conn.del(&full_keys);
         }
 
-        to_evict
+        Ok(to_evict)
     }
+}
+
+fn to_conn_err<E: std::fmt::Display>(e: E) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(e.to_string())
 }

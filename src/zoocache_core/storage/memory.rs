@@ -1,5 +1,6 @@
 use crate::utils::now_secs;
 use dashmap::DashMap;
+use pyo3::PyResult;
 use std::sync::Arc;
 
 use super::{CacheEntry, Storage};
@@ -33,14 +34,15 @@ impl Storage for InMemoryStorage {
     }
 
     #[inline]
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) {
+    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
         let expires_at = ttl.map(|t| now_secs() + t);
         let last_accessed = now_secs();
         self.map.insert(key, (entry, expires_at, last_accessed));
+        Ok(())
     }
 
     #[inline]
-    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) {
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
         for (key, ttl) in updates {
             if let Some(mut entry) = self.map.get_mut(&key) {
                 if let Some(t) = ttl {
@@ -49,22 +51,25 @@ impl Storage for InMemoryStorage {
                 entry.2 = now_secs();
             }
         }
+        Ok(())
     }
 
     #[inline]
-    fn remove(&self, key: &str) {
+    fn remove(&self, key: &str) -> PyResult<()> {
         self.map.remove(key);
+        Ok(())
     }
 
-    fn clear(&self) {
+    fn clear(&self) -> PyResult<()> {
         self.map.clear();
+        Ok(())
     }
 
     fn len(&self) -> usize {
         self.map.len()
     }
 
-    fn evict_lru(&self, count: usize) -> Vec<String> {
+    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
         let mut entries: Vec<(String, u64)> = self
             .map
             .iter()
@@ -79,6 +84,6 @@ impl Storage for InMemoryStorage {
             self.map.remove(key);
         }
 
-        to_evict
+        Ok(to_evict)
     }
 }

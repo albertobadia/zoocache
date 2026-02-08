@@ -123,7 +123,7 @@ impl Core {
                         || now.duration_since(last_flush) > Duration::from_secs(30))
                         && !batch.is_empty()
                     {
-                        storage_worker.touch_batch(batch.drain().collect());
+                        let _ = storage_worker.touch_batch(batch.drain().collect());
                         last_flush = now;
                     }
 
@@ -235,7 +235,7 @@ impl Core {
         let valid = py.detach(|| validate_dependencies(&self.trie, &entry.dependencies));
         if !valid {
             let storage = Arc::clone(&self.storage);
-            py.detach(|| storage.remove(key));
+            py.detach(|| storage.remove(key))?;
             return Ok(None);
         }
 
@@ -248,7 +248,7 @@ impl Core {
                 trie_version: current_global_version,
             });
             let key_str = key.to_string();
-            py.detach(move || storage.set(key_str, updated_entry, None));
+            py.detach(move || storage.set(key_str, updated_entry, None))?;
         }
 
         if let Some(tx) = &self.tti_tx {
@@ -266,7 +266,7 @@ impl Core {
         value: Py<PyAny>,
         dependencies: Vec<String>,
         ttl: Option<u64>,
-    ) {
+    ) -> PyResult<()> {
         let trie_version = self.trie.get_global_version();
         let snapshots = py.detach(|| build_dependency_snapshots(&self.trie, dependencies));
         let entry = Arc::new(CacheEntry {
@@ -277,18 +277,20 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let final_ttl = ttl.or(self.default_ttl);
 
-        py.detach(|| {
-            storage.set(key, entry, final_ttl);
+        py.detach(|| -> PyResult<()> {
+            storage.set(key, entry, final_ttl)?;
 
             if let Some(max) = self.max_entries {
                 let current = storage.len();
                 if current > max {
                     let to_evict = current - max + (max / 10).max(1);
-                    storage.evict_lru(to_evict);
+                    storage.evict_lru(to_evict)?;
                     self.trie.prune(0);
                 }
             }
-        });
+            Ok(())
+        })?;
+        Ok(())
     }
 
     fn invalidate(&self, py: Python, tag: &str) {
@@ -298,12 +300,14 @@ impl Core {
         });
     }
 
-    fn clear(&self, py: Python) {
+    fn clear(&self, py: Python) -> PyResult<()> {
         let storage = Arc::clone(&self.storage);
-        py.detach(|| {
-            storage.clear();
+        py.detach(|| -> PyResult<()> {
+            storage.clear()?;
             self.trie.clear();
-        });
+            Ok(())
+        })?;
+        Ok(())
     }
 
     fn request_prune(&self, max_age_secs: u64) {
