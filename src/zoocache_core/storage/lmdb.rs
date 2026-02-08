@@ -90,7 +90,6 @@ impl LmdbStorage {
             let _ = txn.del(self.db_main, &key, None);
             let _ = txn.del(self.db_ttls, &key, None);
             let _ = txn.del(self.db_lru, &key, None);
-            self.count.fetch_sub(1, Ordering::SeqCst);
             true
         } else {
             false
@@ -166,7 +165,8 @@ impl Storage for LmdbStorage {
         }
 
         if is_new {
-            let new_count = self.count.fetch_add(1, Ordering::SeqCst) + 1;
+            let current_count = self.count.load(Ordering::SeqCst);
+            let new_count = current_count + 1;
             txn.put(
                 self.db_meta,
                 &"count",
@@ -176,7 +176,12 @@ impl Storage for LmdbStorage {
             .map_err(to_py_err)?;
         }
 
-        txn.commit().map_err(to_py_err)
+        txn.commit().map_err(to_py_err)?;
+
+        if is_new {
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
     }
 
     fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
@@ -213,7 +218,18 @@ impl Storage for LmdbStorage {
     fn remove(&self, key: &str) -> PyResult<()> {
         let mut txn = self.env.begin_rw_txn().map_err(to_py_err)?;
         if self.remove_internal(&mut txn, key) {
+            let current_count = self.count.load(Ordering::SeqCst);
+            let new_count = current_count.saturating_sub(1);
+            txn.put(
+                self.db_meta,
+                &"count",
+                &(new_count as u64).to_le_bytes(),
+                WriteFlags::empty(),
+            )
+            .map_err(to_py_err)?;
+
             txn.commit().map_err(to_py_err)?;
+            self.count.fetch_sub(1, Ordering::SeqCst);
         }
         Ok(())
     }
@@ -225,8 +241,9 @@ impl Storage for LmdbStorage {
         let _ = txn.clear_db(self.db_lru);
         let _ = txn.clear_db(self.db_lru_index);
         let _ = txn.clear_db(self.db_meta);
+        txn.commit().map_err(to_py_err)?;
         self.count.store(0, Ordering::SeqCst);
-        txn.commit().map_err(to_py_err)
+        Ok(())
     }
 
     fn len(&self) -> usize {
@@ -246,19 +263,25 @@ impl Storage for LmdbStorage {
             }
         }
 
+        let mut evicted_count = 0;
         for key in &to_evict {
-            self.remove_internal(&mut txn, key);
+            if self.remove_internal(&mut txn, key) {
+                evicted_count += 1;
+            }
         }
 
         let current_count = self.count.load(Ordering::SeqCst);
+        let new_count = current_count.saturating_sub(evicted_count);
         txn.put(
             self.db_meta,
             &"count",
-            &(current_count as u64).to_le_bytes(),
+            &(new_count as u64).to_le_bytes(),
             WriteFlags::empty(),
         )
         .map_err(to_py_err)?;
+
         txn.commit().map_err(to_py_err)?;
+        self.count.fetch_sub(evicted_count, Ordering::SeqCst);
 
         Ok(to_evict)
     }
