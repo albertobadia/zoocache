@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::sync::mpsc::{self, Sender};
@@ -18,6 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
+use crate::utils::{to_conn_err, to_runtime_err};
 
 pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
 
@@ -343,6 +345,10 @@ impl Core {
         self.trie.get_tag_version(tag)
     }
 
+    fn len(&self) -> usize {
+        self.storage.len()
+    }
+
     fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
@@ -377,6 +383,3 @@ fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-use crate::utils::to_conn_err;
-
-use crate::utils::to_runtime_err;

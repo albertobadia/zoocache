@@ -101,10 +101,9 @@ def cacheable(
     ttl: Optional[int] = None,
 ):
     def decorator(func: Callable):
-        core = _manager.get_core()
-
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
+            core = _manager.get_core()
             key = _generate_key(func, namespace, args, kwargs)
             _manager.maybe_prune()
 
@@ -137,6 +136,7 @@ def cacheable(
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
+            core = _manager.get_core()
             key = _generate_key(func, namespace, args, kwargs)
             _manager.maybe_prune()
 

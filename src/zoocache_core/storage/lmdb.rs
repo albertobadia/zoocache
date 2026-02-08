@@ -118,12 +118,7 @@ impl Storage for LmdbStorage {
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
-        let data = Python::attach(|py| entry.serialize(py).ok());
-        if data.is_none() {
-            return Ok(());
-        }
-        let data = data.unwrap();
-
+        let data = Python::attach(|py| entry.serialize(py))?;
         let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
         self.delete_from_index(&mut txn, &key);
 

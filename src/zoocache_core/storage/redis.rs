@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use std::sync::Arc;
+use crate::utils::to_conn_err;
 
 use super::{CacheEntry, Storage};
 
@@ -136,4 +137,3 @@ impl Storage for RedisStorage {
     }
 }
 
-use crate::utils::to_conn_err;

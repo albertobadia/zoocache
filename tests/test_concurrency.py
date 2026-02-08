@@ -119,3 +119,31 @@ def test_concurrent_reads_and_invalidations():
         t.join()
 
     assert len(results) == 1000
+
+
+@pytest.mark.asyncio
+async def test_race_condition_protection():
+    """
+    Verify protection against thundering herd / race conditions.
+    Based on the reproduction script logic to ensure single execution per expired key.
+    """
+    from zoocache import _reset, configure
+    _reset()
+    configure()
+
+    calls = 0
+
+    @cacheable(ttl=1)
+    async def slow_func():
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.1)
+        return "done"
+
+    # Launch multiple concurrent requests
+    tasks = [slow_func() for _ in range(10)]
+    results = await asyncio.gather(*tasks)
+
+    assert all(r == "done" for r in results)
+    # Should be exactly 1 call due to flight coalescing
+    assert calls == 1
