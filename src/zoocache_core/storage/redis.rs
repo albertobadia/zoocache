@@ -68,10 +68,15 @@ impl Storage for RedisStorage {
         }
     }
 
-    fn touch(&self, key: &str, ttl: u64) {
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) {
         if let Ok(mut conn) = self.pool.get() {
-            let _: redis::RedisResult<()> = conn.expire(self.full_key(key), ttl as i64);
-            let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), key, now_secs() as f64);
+            let now = now_secs() as f64;
+            for (key, ttl) in updates {
+                if let Some(t) = ttl {
+                    let _: redis::RedisResult<()> = conn.expire(self.full_key(&key), t as i64);
+                }
+                let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), &key, now);
+            }
         }
     }
 

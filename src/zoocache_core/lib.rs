@@ -29,7 +29,7 @@ struct Core {
     max_entries: Option<usize>,
     #[allow(dead_code)]
     read_extend_ttl: bool,
-    tti_tx: Option<Sender<(String, u64)>>,
+    tti_tx: Option<Sender<(String, Option<u64>)>>,
 }
 
 #[pymethods]
@@ -85,28 +85,49 @@ impl Core {
         };
 
         let mut tti_tx = None;
-        if default_ttl.is_some() && read_extend_ttl {
-            let (tx, rx) = mpsc::channel::<(String, u64)>();
+        if read_extend_ttl {
+            let (tx, rx) = mpsc::channel::<(String, Option<u64>)>();
             let storage_worker = Arc::clone(&storage);
 
             thread::spawn(move || {
                 let mut last_touches: HashMap<String, Instant> = HashMap::new();
-                while let Ok((key, ttl)) = rx.recv() {
-                    let now = Instant::now();
-                    if last_touches
-                        .get(&key)
-                        .is_some_and(|&last| now.duration_since(last) < Duration::from_secs(60))
-                    {
-                        continue;
+                let mut batch: HashMap<String, Option<u64>> = HashMap::new();
+                let mut last_flush = Instant::now();
+
+                loop {
+                    let msg = rx.recv_timeout(Duration::from_secs(1));
+
+                    if let Ok((key, ttl)) = &msg {
+                        let now = Instant::now();
+                        if last_touches
+                            .get(key)
+                            .is_some_and(|&last| now.duration_since(last) < Duration::from_secs(30))
+                        {
+                            continue;
+                        }
+
+                        batch.insert(key.clone(), *ttl);
+                        last_touches.insert(key.clone(), now);
                     }
 
-                    storage_worker.touch(&key, ttl);
-                    last_touches.insert(key, now);
+                    let now = Instant::now();
+                    if (batch.len() >= 1000
+                        || now.duration_since(last_flush) > Duration::from_secs(30))
+                        && !batch.is_empty()
+                    {
+                        let updates: Vec<(String, Option<u64>)> = batch.drain().collect();
+                        storage_worker.touch_batch(updates);
+                        last_flush = now;
+                    }
 
                     if last_touches.len() > 10000 {
                         last_touches.retain(|_, &mut instant| {
                             now.duration_since(instant) < Duration::from_secs(300)
                         });
+                    }
+
+                    if let Err(mpsc::RecvTimeoutError::Disconnected) = msg {
+                        break;
                     }
                 }
             });
@@ -227,8 +248,8 @@ impl Core {
             py.detach(move || storage.set(key_str, updated_entry, None));
         }
 
-        if let (Some(tx), Some(ttl)) = (&self.tti_tx, self.default_ttl) {
-            let _ = tx.send((key.to_string(), ttl));
+        if let Some(tx) = &self.tti_tx {
+            let _ = tx.send((key.to_string(), self.default_ttl));
         }
 
         Ok(Some(entry.value.clone_ref(py)))

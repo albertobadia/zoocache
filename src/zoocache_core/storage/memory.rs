@@ -42,10 +42,14 @@ impl Storage for InMemoryStorage {
     }
 
     #[inline]
-    fn touch(&self, key: &str, ttl: u64) {
-        if let Some(mut entry) = self.map.get_mut(key) {
-            entry.1 = Some(now_secs() + ttl);
-            entry.2 = now_secs();
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) {
+        for (key, ttl) in updates {
+            if let Some(mut entry) = self.map.get_mut(&key) {
+                if let Some(t) = ttl {
+                    entry.1 = Some(now_secs() + t);
+                }
+                entry.2 = now_secs();
+            }
         }
     }
 

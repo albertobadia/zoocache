@@ -74,7 +74,7 @@ impl CacheEntry {
 pub(crate) trait Storage: Send + Sync {
     fn get(&self, key: &str) -> Option<Arc<CacheEntry>>;
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>);
-    fn touch(&self, key: &str, ttl: u64);
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>);
     fn remove(&self, key: &str);
     fn clear(&self);
     fn len(&self) -> usize;

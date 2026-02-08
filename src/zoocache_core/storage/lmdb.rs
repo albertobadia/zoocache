@@ -73,18 +73,6 @@ impl LmdbStorage {
             count: AtomicUsize::new(count),
         })
     }
-
-    fn touch_lru(&self, key: &str) {
-        if let Ok(mut txn) = self.env.begin_rw_txn() {
-            let _ = txn.put(
-                self.db_lru,
-                &key,
-                &now_secs().to_le_bytes(),
-                WriteFlags::empty(),
-            );
-            let _ = txn.commit();
-        }
-    }
 }
 
 impl Storage for LmdbStorage {
@@ -104,14 +92,7 @@ impl Storage for LmdbStorage {
         }
 
         let data = txn.get(self.db_main, &key).ok()?;
-        let result = Python::attach(|py| CacheEntry::deserialize(py, data).ok().map(Arc::new));
-
-        if result.is_some() {
-            drop(txn);
-            self.touch_lru(key);
-        }
-
-        result
+        Python::attach(|py| CacheEntry::deserialize(py, data).ok().map(Arc::new))
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) {
@@ -158,21 +139,21 @@ impl Storage for LmdbStorage {
         }
     }
 
-    fn touch(&self, key: &str, ttl: u64) {
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) {
         if let Ok(mut txn) = self.env.begin_rw_txn() {
-            let expire_at = now_secs() + ttl;
-            let _ = txn.put(
-                self.db_ttls,
-                &key,
-                &expire_at.to_le_bytes(),
-                WriteFlags::empty(),
-            );
-            let _ = txn.put(
-                self.db_lru,
-                &key,
-                &now_secs().to_le_bytes(),
-                WriteFlags::empty(),
-            );
+            let now = now_secs().to_le_bytes();
+            for (key, ttl) in updates {
+                let _ = txn.put(self.db_lru, &key, &now, WriteFlags::empty());
+                if let Some(t) = ttl {
+                    let expire_at = now_secs() + t;
+                    let _ = txn.put(
+                        self.db_ttls,
+                        &key,
+                        &expire_at.to_le_bytes(),
+                        WriteFlags::empty(),
+                    );
+                }
+            }
             let _ = txn.commit();
         }
     }
