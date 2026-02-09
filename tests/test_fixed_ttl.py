@@ -1,10 +1,10 @@
 import time
-from zoocache import cacheable, configure, _reset
+from zoocache import cacheable, configure, reset
 
 
 def test_fixed_ttl_strict():
     """Verify that read_extend_ttl=False prevents TTI behavior."""
-    _reset()
+    reset()
     # Configure with 2 seconds TTL, but DISABLE extension on read
     configure(default_ttl=2, read_extend_ttl=False)
 

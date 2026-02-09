@@ -163,5 +163,5 @@ def cacheable(
     return decorator
 
 
-def _reset() -> None:
+def reset() -> None:
     _manager.reset()

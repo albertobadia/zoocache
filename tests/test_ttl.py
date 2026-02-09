@@ -1,10 +1,10 @@
 import time
 import pytest
-from zoocache import cacheable, configure, _reset
+from zoocache import cacheable, configure, reset
 
 
 def test_memory_ttl():
-    _reset()
+    reset()
     configure(default_ttl=1)  # 1 second TTL
 
     @cacheable()
@@ -26,7 +26,7 @@ def test_memory_ttl():
 
 
 def test_per_decorator_ttl():
-    _reset()
+    reset()
     configure(default_ttl=10)
 
     @cacheable(ttl=1)
@@ -40,7 +40,7 @@ def test_per_decorator_ttl():
 
 
 def test_tti_refresh():
-    _reset()
+    reset()
     # This test verifies that accessing a key refreshes its TTL
     configure(default_ttl=2)
 
@@ -67,7 +67,7 @@ def test_tti_refresh():
 
 @pytest.mark.parametrize("storage_url", [None, "lmdb://./test_ttl_lmdb"])
 def test_all_storages_ttl(storage_url):
-    _reset()
+    reset()
     import shutil
     import os
 

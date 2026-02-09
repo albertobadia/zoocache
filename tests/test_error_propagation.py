@@ -1,5 +1,5 @@
 import pytest
-from zoocache import configure, _reset
+from zoocache import configure, reset
 from zoocache.core import _manager
 
 
@@ -8,7 +8,7 @@ def test_lmdb_error_propagation(tmp_path):
     Verify that LMDB errors (like MDB_BAD_VALSIZE) are correctly propagated
     from Rust to Python as Exceptions.
     """
-    _reset()
+    reset()
     storage_path = tmp_path / "test_error_db"
     storage_url = f"lmdb://{storage_path}"
 

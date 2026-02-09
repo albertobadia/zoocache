@@ -1,7 +1,7 @@
 import os
 import shutil
 import tempfile
-from zoocache import cacheable, invalidate, configure, _reset
+from zoocache import cacheable, invalidate, configure, reset
 
 
 def test_large_data_objects():
@@ -37,7 +37,7 @@ def test_lazy_configuration():
     Verify that decorators defined BEFORE configure() still respect the configuration.
     This tests the fix for the 'premature capture of Core' bug.
     """
-    _reset()
+    reset()
     temp_dir = tempfile.mkdtemp()
     lmdb_path = os.path.join(temp_dir, "test_db_lazy")
 
@@ -58,7 +58,7 @@ def test_lazy_configuration():
         assert os.path.exists(lmdb_path)
         assert os.path.exists(os.path.join(lmdb_path, "data.mdb"))
     finally:
-        _reset()
+        reset()
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
 
@@ -68,7 +68,7 @@ def test_lmdb_counter_consistency():
     Verify that LMDB correctly tracks the number of items (len).
     This tests the fix for the 'LMDB count reporting 0' bug.
     """
-    _reset()
+    reset()
     temp_dir = tempfile.mkdtemp()
     lmdb_path = os.path.join(temp_dir, "test_db_count")
     lmdb_url = f"lmdb://{lmdb_path}"
@@ -86,15 +86,16 @@ def test_lmdb_counter_consistency():
 
         # Force a check of the storage length
         from zoocache.core import _manager
+
         idx = _manager.get_core().len()
         assert idx == 100
 
         # Verify persistence of count
-        _reset()
+        reset()
         configure(storage_url=lmdb_url)
         idx_reopen = _manager.get_core().len()
         assert idx_reopen == 100
     finally:
-        _reset()
+        reset()
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)

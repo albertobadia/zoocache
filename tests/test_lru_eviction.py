@@ -1,8 +1,8 @@
-from zoocache import cacheable, configure, _reset
+from zoocache import cacheable, configure, reset
 
 
 def test_eviction_triggers_at_max():
-    _reset()
+    reset()
     configure(max_entries=10)
 
     call_count = {"value": 0}
@@ -26,7 +26,7 @@ def test_eviction_triggers_at_max():
 def test_lru_evicts_oldest_entries():
     import time
 
-    _reset()
+    reset()
     configure(max_entries=5)
 
     call_count = {"value": 0}
@@ -56,7 +56,7 @@ def test_lru_evicts_oldest_entries():
 
 
 def test_eviction_with_lmdb():
-    _reset()
+    reset()
     import os
     import shutil
 

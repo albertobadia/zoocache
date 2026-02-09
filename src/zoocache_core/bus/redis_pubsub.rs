@@ -40,7 +40,8 @@ impl RedisPubSubBus {
                     Err(e) => {
                         log::warn!(
                             "Bus listener connection failed: {}. Retrying in {}ms...",
-                            e, backoff_ms
+                            e,
+                            backoff_ms
                         );
                         thread::sleep(std::time::Duration::from_millis(backoff_ms));
                         backoff_ms = (backoff_ms * 2).min(5000);

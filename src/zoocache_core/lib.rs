@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-
+use crate::utils::{to_conn_err, to_runtime_err};
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::sync::mpsc::{self, Sender};
@@ -19,7 +19,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
-use crate::utils::{to_conn_err, to_runtime_err};
 
 pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
 
@@ -392,4 +391,3 @@ fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("InvalidTag", m.py().get_type::<InvalidTag>())?;
     Ok(())
 }
-

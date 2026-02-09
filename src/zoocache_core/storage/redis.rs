@@ -1,9 +1,9 @@
 use crate::utils::now_secs;
+use crate::utils::to_conn_err;
 use pyo3::prelude::*;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use std::sync::Arc;
-use crate::utils::to_conn_err;
 
 use super::{CacheEntry, Storage};
 
@@ -54,7 +54,7 @@ impl Storage for RedisStorage {
         if let Some(data) = Python::attach(|py| entry.serialize(py).ok()) {
             let full_key = self.full_key(&key);
             let mut pipe = redis::pipe();
-            
+
             match ttl {
                 Some(t) => pipe.set_ex(&full_key, data, t),
                 None => pipe.set(&full_key, data),
@@ -69,7 +69,7 @@ impl Storage for RedisStorage {
         let mut conn = self.pool.get().map_err(to_conn_err)?;
         let now = now_secs() as f64;
         let mut pipe = redis::pipe();
-        
+
         for (key, ttl) in updates {
             if let Some(t) = ttl {
                 pipe.expire(self.full_key(&key), t as i64);
@@ -135,7 +135,7 @@ impl Storage for RedisStorage {
         let items: Vec<(String, f64)> = conn
             .zpopmin(self.lru_key(), count as isize)
             .unwrap_or_default();
-        
+
         let to_evict: Vec<String> = items.into_iter().map(|(k, _)| k).collect();
 
         if !to_evict.is_empty() {
@@ -149,4 +149,3 @@ impl Storage for RedisStorage {
         Ok(to_evict)
     }
 }
-
