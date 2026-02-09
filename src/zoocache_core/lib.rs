@@ -24,6 +24,9 @@ use crate::utils::{to_conn_err, to_runtime_err};
 pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
 
 fn validate_tag(tag: &str) -> PyResult<()> {
+    if tag.is_empty() {
+        return Err(InvalidTag::new_err("Tag cannot be empty"));
+    }
     let mut depth = 0;
     for c in tag.chars() {
         if c == ':' {
@@ -41,9 +44,6 @@ fn validate_tag(tag: &str) -> PyResult<()> {
             "Tag depth exceeded: {}. Max allowed depth is 16.",
             depth
         )));
-    }
-    if tag.is_empty() {
-        return Err(InvalidTag::new_err("Tag cannot be empty"));
     }
     Ok(())
 }
