@@ -6,7 +6,6 @@ mod utils;
 
 use dashmap::DashMap;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
