@@ -17,16 +17,18 @@ pub(crate) struct LmdbStorage {
 }
 
 impl LmdbStorage {
-    pub fn new(path: &str) -> PyResult<Self> {
+    pub fn new(path: &str, map_size: Option<usize>) -> PyResult<Self> {
         let path = Path::new(path);
         if !path.exists() {
             std::fs::create_dir_all(path)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
         }
 
+        let map_size = map_size.unwrap_or(1024 * 1024 * 1024);
+
         let env = Environment::new()
             .set_max_dbs(5)
-            .set_map_size(1024 * 1024 * 1024)
+            .set_map_size(map_size)
             .open(path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 

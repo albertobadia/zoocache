@@ -51,6 +51,7 @@ def configure(
     default_ttl: Optional[int] = None,
     read_extend_ttl: bool = True,
     max_entries: Optional[int] = None,
+    lmdb_map_size: Optional[int] = None,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -60,6 +61,7 @@ def configure(
         default_ttl=default_ttl,
         read_extend_ttl=read_extend_ttl,
         max_entries=max_entries,
+        lmdb_map_size=lmdb_map_size,
     )
 
 

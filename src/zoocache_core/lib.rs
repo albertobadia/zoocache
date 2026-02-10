@@ -65,7 +65,7 @@ struct Core {
 #[pymethods]
 impl Core {
     #[new]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None))]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -73,13 +73,14 @@ impl Core {
         default_ttl: Option<u64>,
         read_extend_ttl: bool,
         max_entries: Option<usize>,
+        lmdb_map_size: Option<usize>,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
                 Arc::new(RedisStorage::new(url, prefix).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
-                Arc::new(LmdbStorage::new(&url[7..]).map_err(to_runtime_err)?)
+                Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size).map_err(to_runtime_err)?)
             }
             Some(url) => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
