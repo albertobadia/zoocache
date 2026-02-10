@@ -6,12 +6,11 @@ mod utils;
 
 use dashmap::DashMap;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-
+use crate::utils::{to_conn_err, to_runtime_err};
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::sync::mpsc::{self, Sender};
@@ -19,11 +18,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
-use crate::utils::{to_conn_err, to_runtime_err};
 
 pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
 
 fn validate_tag(tag: &str) -> PyResult<()> {
+    if tag.is_empty() {
+        return Err(InvalidTag::new_err("Tag cannot be empty"));
+    }
     let mut depth = 0;
     for c in tag.chars() {
         if c == ':' {
@@ -41,9 +42,6 @@ fn validate_tag(tag: &str) -> PyResult<()> {
             "Tag depth exceeded: {}. Max allowed depth is 16.",
             depth
         )));
-    }
-    if tag.is_empty() {
-        return Err(InvalidTag::new_err("Tag cannot be empty"));
     }
     Ok(())
 }
@@ -67,7 +65,7 @@ struct Core {
 #[pymethods]
 impl Core {
     #[new]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None))]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -75,13 +73,14 @@ impl Core {
         default_ttl: Option<u64>,
         read_extend_ttl: bool,
         max_entries: Option<usize>,
+        lmdb_map_size: Option<usize>,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
                 Arc::new(RedisStorage::new(url, prefix).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
-                Arc::new(LmdbStorage::new(&url[7..]).map_err(to_runtime_err)?)
+                Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size).map_err(to_runtime_err)?)
             }
             Some(url) => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -392,4 +391,3 @@ fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("InvalidTag", m.py().get_type::<InvalidTag>())?;
     Ok(())
 }
-

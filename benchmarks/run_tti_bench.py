@@ -1,11 +1,11 @@
 import time
 import os
 import shutil
-from zoocache import cacheable, configure, _reset
+from zoocache import cacheable, configure, reset
 
 
 def bench_storage(name, storage_url, iterations=1000, ttl=None):
-    _reset()
+    reset()
     configure(storage_url=storage_url, default_ttl=ttl)
 
     @cacheable(namespace=f"bench_{name}")

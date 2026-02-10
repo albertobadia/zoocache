@@ -49,20 +49,22 @@ impl CacheEntry {
 
         let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
         let compressed = compress_prepend_size(&packed);
-        
+
         // Prepend Magic Header
         let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
         final_data.extend_from_slice(MAGIC_HEADER);
         final_data.extend_from_slice(&compressed);
-        
+
         Ok(final_data)
     }
 
     pub fn deserialize(py: Python, data: &[u8]) -> PyResult<Self> {
         if data.len() < MAGIC_HEADER.len() || &data[..MAGIC_HEADER.len()] != MAGIC_HEADER {
-             return Err(to_runtime_err("Invalid cache file format or version mismatch"));
+            return Err(to_runtime_err(
+                "Invalid cache file format or version mismatch",
+            ));
         }
-        
+
         let payload = &data[MAGIC_HEADER.len()..];
         let decompressed = decompress_size_prepended(payload).map_err(to_runtime_err)?;
         let entry: SerializableCacheEntry =

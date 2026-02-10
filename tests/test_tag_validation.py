@@ -1,9 +1,9 @@
 import pytest
-from zoocache import configure, _reset, invalidate, cacheable, InvalidTag
+from zoocache import configure, reset, invalidate, cacheable, InvalidTag
 
 
 def test_tag_validation_simple():
-    _reset()
+    reset()
     configure()  # Default InMemory
 
     # Valid tags
@@ -24,7 +24,7 @@ def test_tag_validation_simple():
 
 
 def test_dependency_validation():
-    _reset()
+    reset()
     configure()
 
     @cacheable(deps=["valid_dep", "another:valid"])

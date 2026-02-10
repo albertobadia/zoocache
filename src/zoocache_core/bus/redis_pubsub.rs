@@ -38,9 +38,10 @@ impl RedisPubSubBus {
                 let mut conn = match conn_res {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!(
-                            "[zoocache] Bus listener connection failed: {}. Retrying in {}ms...",
-                            e, backoff_ms
+                        log::warn!(
+                            "Bus listener connection failed: {}. Retrying in {}ms...",
+                            e,
+                            backoff_ms
                         );
                         thread::sleep(std::time::Duration::from_millis(backoff_ms));
                         backoff_ms = (backoff_ms * 2).min(5000);
@@ -50,13 +51,13 @@ impl RedisPubSubBus {
 
                 let mut pubsub = conn.as_pubsub();
                 if let Err(e) = pubsub.subscribe(&channel) {
-                    eprintln!("[zoocache] Bus subscribe failed: {}. Retrying...", e);
+                    log::warn!("Bus subscribe failed: {}. Retrying...", e);
                     thread::sleep(std::time::Duration::from_millis(backoff_ms));
                     backoff_ms = (backoff_ms * 2).min(5000);
                     continue;
                 }
 
-                println!("[zoocache] Bus connected to {}", channel);
+                log::info!("Bus connected to {}", channel);
                 backoff_ms = 100; // Reset on success
 
                 while let Ok(msg) = pubsub.get_message() {

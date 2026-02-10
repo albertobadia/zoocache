@@ -127,8 +127,9 @@ async def test_race_condition_protection():
     Verify protection against thundering herd / race conditions.
     Based on the reproduction script logic to ensure single execution per expired key.
     """
-    from zoocache import _reset, configure
-    _reset()
+    from zoocache import reset, configure
+
+    reset()
     configure()
 
     calls = 0
@@ -145,14 +146,17 @@ async def test_race_condition_protection():
     results = await asyncio.gather(*tasks)
 
     assert all(r == "done" for r in results)
+
+
 @pytest.mark.asyncio
 async def test_async_stress_race_condition():
     """
     Stress test with high concurrency to ensure the race condition fix is robust.
     Based on reproduce_race.py
     """
-    from zoocache import _reset, configure, clear
-    _reset()
+    from zoocache import reset, configure, clear
+
+    reset()
     configure()
     clear()
 
@@ -169,9 +173,9 @@ async def test_async_stress_race_condition():
     # Launch 500 concurrent tasks
     n_tasks = 500
     tasks = [stress_func("common_key") for _ in range(n_tasks)]
-    
+
     results = await asyncio.gather(*tasks)
-    
+
     assert len(results) == n_tasks
     assert all(r == "result-common_key" for r in results)
     # MUST be exactly 1 call
@@ -183,8 +187,9 @@ def test_sync_stress_race_condition():
     Stress test for synchronous thundering herd.
     Based on reproduce_race_sync.py
     """
-    from zoocache import _reset, configure, clear
-    _reset()
+    from zoocache import reset, configure, clear
+
+    reset()
     configure()
     clear()
 
@@ -203,7 +208,7 @@ def test_sync_stress_race_condition():
 
     n_threads = 100
     threads = [threading.Thread(target=worker) for _ in range(n_threads)]
-    
+
     for t in threads:
         t.start()
     for t in threads:

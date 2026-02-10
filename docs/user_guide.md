@@ -159,7 +159,7 @@ def get_dashboard(user_id: int):
 
 ## API Reference
 
-### `@cacheable(namespace=None, deps=None, ttl=None)`
+### `@cacheable(*, namespace=None, deps=None, ttl=None)`
 
 Decorator that caches function results.
 
@@ -235,7 +235,7 @@ Returns the version of the Rust core.
 ```python
 from zoocache import version
 
-print(version())  # "0.1.0"
+print(version())
 ```
 
 ---

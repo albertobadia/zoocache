@@ -51,6 +51,7 @@ def configure(
     default_ttl: Optional[int] = None,
     read_extend_ttl: bool = True,
     max_entries: Optional[int] = None,
+    lmdb_map_size: Optional[int] = None,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -60,6 +61,7 @@ def configure(
         default_ttl=default_ttl,
         read_extend_ttl=read_extend_ttl,
         max_entries=max_entries,
+        lmdb_map_size=lmdb_map_size,
     )
 
 
@@ -96,15 +98,17 @@ def _collect_deps(
 
 
 def cacheable(
+    func: Optional[Callable] = None,
+    *,
     namespace: Optional[str] = None,
     deps: Optional[Union[Callable, Iterable[str]]] = None,
     ttl: Optional[int] = None,
 ):
-    def decorator(func: Callable):
-        @functools.wraps(func)
+    def decorator(fn: Callable):
+        @functools.wraps(fn)
         async def async_wrapper(*args, **kwargs):
             core = _manager.get_core()
-            key = _generate_key(func, namespace, args, kwargs)
+            key = _generate_key(fn, namespace, args, kwargs)
             _manager.maybe_prune()
 
             while True:
@@ -118,16 +122,13 @@ def cacheable(
                 if fut is not None:
                     return await fut
 
-                # Follower, but future not ready yet (race condition).
-                # Yield and retry.
                 await asyncio.sleep(0)
 
-            # Executive logic for leader
             leader_fut = asyncio.get_running_loop().create_future()
             core.register_flight_future(key, leader_fut)
             try:
                 with DepsTracker():
-                    res = await func(*args, **kwargs)
+                    res = await fn(*args, **kwargs)
                     core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
                 leader_fut.set_result(res)
@@ -137,10 +138,10 @@ def cacheable(
                 leader_fut.set_exception(e)
                 raise
 
-        @functools.wraps(func)
+        @functools.wraps(fn)
         def sync_wrapper(*args, **kwargs):
             core = _manager.get_core()
-            key = _generate_key(func, namespace, args, kwargs)
+            key = _generate_key(fn, namespace, args, kwargs)
             _manager.maybe_prune()
 
             val, is_leader = core.get_or_entry(key)
@@ -149,7 +150,7 @@ def cacheable(
 
             try:
                 with DepsTracker():
-                    res = func(*args, **kwargs)
+                    res = fn(*args, **kwargs)
                     core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
                 return res
@@ -157,10 +158,12 @@ def cacheable(
                 core.finish_flight(key, True, None)
                 raise
 
-        return async_wrapper if inspect.iscoroutinefunction(func) else sync_wrapper
+        return async_wrapper if inspect.iscoroutinefunction(fn) else sync_wrapper
 
+    if func is not None:
+        return decorator(func)
     return decorator
 
 
-def _reset() -> None:
+def reset() -> None:
     _manager.reset()
