@@ -116,11 +116,11 @@ Explore the deep dives into Zoocache's architecture and features:
 
 <div align="center" markdown="1">
 
-[![Benchmarks](https://img.shields.io/badge/view-benchmarks-orange?style=for-the-badge&logo=google-cloud)](dev/bench/)
+[![Benchmarks](https://img.shields.io/badge/view-benchmarks-orange?style=for-the-badge&logo=google-cloud)](main/bench/)
 
 </div>
 
-[View Detailed Benchmark Results](dev/bench/)
+[View Detailed Benchmark Results](main/bench/)
 
 ---
 
