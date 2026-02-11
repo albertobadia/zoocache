@@ -193,10 +193,11 @@ def _auto_configure():
 class ZooCacheManager(models.Manager):
     """Custom manager that enables transparent caching for Django models."""
 
-    def __init__(self, *, ttl=None, prefix=None):
+    def __init__(self, *, ttl=None, prefix=None, ensure_objects_manager=True):
         super().__init__()
         self._zoo_ttl = ttl
         self._zoo_prefix = prefix
+        self._ensure_objects_manager = ensure_objects_manager
 
     def get_queryset(self):
         qs = ZooCacheQuerySet(self.model, using=self._db)
@@ -207,6 +208,10 @@ class ZooCacheManager(models.Manager):
     def contribute_to_class(self, model, name):
         super().contribute_to_class(model, name)
         _auto_configure()
+
+        if self._ensure_objects_manager and not hasattr(model, "objects"):
+            models.Manager().contribute_to_class(model, "objects")
+
         if not getattr(model, "_zoo_signals_connected", False):
             post_save.connect(_invalidate_model, sender=model, weak=False)
             post_delete.connect(_invalidate_model, sender=model, weak=False)

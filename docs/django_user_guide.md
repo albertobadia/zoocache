@@ -96,7 +96,7 @@ When you perform a query that involves JOINs, ZooCache automatically detects the
 
 ```python
 # This query depends on BOTH Book and Author models
-books = Book.cached.filter(author__name="Tolkien")
+books = Book.cached.filter(author__name="Isaac Asimov")
 
 # Saving an Author will invalidate this Book query!
 author.save()
@@ -124,8 +124,13 @@ for book in books:
 |-----------|------|-------------|
 | `ttl` | `int` | Override the default TTL for this manager's queries. |
 | `prefix` | `str` | Optional namespace prefix for cache keys. |
+| `ensure_objects_manager` | `bool` | If `True` (default), automatically injects `objects = models.Manager()` if not defined. |
+
+> [!TIP]
+> By default, ZooCache ensures that an `objects` manager is available. This prevents the common Django issue where adding a custom manager removes the default `objects` manager.
 
 ```python
+# 'objects' is automatically available even if not defined
 cached = ZooCacheManager(ttl=60, prefix="fast_cache")
 ```
 
