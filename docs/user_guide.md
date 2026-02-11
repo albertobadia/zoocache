@@ -132,7 +132,7 @@ org:1                  ← invalidate("org:1") kills ALL below
 ```
 
 > [!IMPORTANT]
-> Tags are restricted to **alphanumeric characters, `_`, and `:`**. 
+> Tags are restricted to **alphanumeric characters, `_`, `:`, and `.`**. 
 > Using any other character will raise an `InvalidTag` exception.
 
 ### Dynamic Dependencies with `add_deps()`
@@ -421,13 +421,14 @@ prune(3600)
 
 **Cause**: You are using forbidden characters in a dependency tag or invalidation call.
 
-**Solution**: Ensure your tags only contain `a-z`, `A-Z`, `0-9`, `_` or `:`.
+**Solution**: Ensure your tags only contain `a-z`, `A-Z`, `0-9`, `_`, `:` or `.`.
 
 ---
 
 ## Next Steps
 
 - [Architecture Overview](architecture.md)
+- [Django Integration](django.md)
 - [Hierarchical Invalidation Deep Dive](invalidation.md)
 - [Distributed Consistency with HLC](consistency.md)
 - [Reliability & Edge Cases](reliability.md)

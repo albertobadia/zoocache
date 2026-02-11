@@ -17,7 +17,12 @@ import pytest  # noqa: E402
 from django.db import connection, models  # noqa: E402
 
 import zoocache  # noqa: E402
-from zoocache.contrib.django import ZooCacheManager, _model_to_raw, _raw_to_instance  # noqa: E402
+from zoocache.contrib.django import (  # noqa: E402
+    ZooCacheManager,
+    _model_to_raw,
+    _raw_to_instance,
+    _get_query_deps,
+)
 
 
 class Author(models.Model):
@@ -28,19 +33,19 @@ class Author(models.Model):
     cached = ZooCacheManager()
 
     class Meta:
-        app_label = "tests"
+        app_label = "contenttypes"
 
 
 class Book(models.Model):
     title = models.CharField(max_length=200)
-    author = models.ForeignKey(Author, on_delete=models.CASCADE)
+    author = models.ForeignKey(Author, on_delete=models.CASCADE, related_name="books")
     published = models.BooleanField(default=False)
 
     objects = models.Manager()
     cached = ZooCacheManager(ttl=60)
 
     class Meta:
-        app_label = "tests"
+        app_label = "contenttypes"
 
 
 class PrefixedItem(models.Model):
@@ -50,7 +55,28 @@ class PrefixedItem(models.Model):
     cached = ZooCacheManager(prefix="custom")
 
     class Meta:
-        app_label = "tests"
+        app_label = "contenttypes"
+
+
+class Tag(models.Model):
+    name = models.CharField(max_length=50)
+
+    objects = models.Manager()
+    cached = ZooCacheManager()
+
+    class Meta:
+        app_label = "contenttypes"
+
+
+class Article(models.Model):
+    title = models.CharField(max_length=200)
+    tags = models.ManyToManyField(Tag)
+
+    objects = models.Manager()
+    cached = ZooCacheManager()
+
+    class Meta:
+        app_label = "contenttypes"
 
 
 @pytest.fixture(autouse=True)
@@ -58,14 +84,14 @@ def setup_db():
     zoocache.reset()
     zoocache.clear()
     with connection.schema_editor() as editor:
-        for model in [Author, Book, PrefixedItem]:
+        for model in [Author, Book, PrefixedItem, Tag, Article]:
             try:
                 editor.create_model(model)
             except Exception:
                 pass
     yield
     with connection.schema_editor() as editor:
-        for model in [PrefixedItem, Book, Author]:
+        for model in [Article, Tag, PrefixedItem, Book, Author]:
             try:
                 editor.delete_model(model)
             except Exception:
@@ -88,7 +114,7 @@ class TestQuerySetCaching:
         result1 = list(Author.cached.filter(age__gte=25))
         assert len(result1) == 2
 
-        self._insert_raw("tests_author", name="Charlie", age=28)
+        self._insert_raw("contenttypes_author", name="Charlie", age=28)
 
         result2 = list(Author.cached.filter(age__gte=25))
         assert len(result2) == 2
@@ -99,7 +125,7 @@ class TestQuerySetCaching:
         result1 = list(Author.cached.all())
         assert len(result1) == 1
 
-        self._insert_raw("tests_author", name="Bob", age=25)
+        self._insert_raw("contenttypes_author", name="Bob", age=25)
 
         result2 = list(Author.cached.all())
         assert len(result2) == 1
@@ -114,7 +140,7 @@ class TestQuerySetCaching:
 
         with connection.cursor() as cursor:
             cursor.execute(
-                'UPDATE "tests_author" SET "name" = %s WHERE "id" = %s',
+                'UPDATE "contenttypes_author" SET "name" = %s WHERE "id" = %s',
                 ["Alice Updated", author.pk],
             )
 
@@ -129,7 +155,7 @@ class TestQuerySetCaching:
         count1 = Author.cached.all().count()
         assert count1 == 2
 
-        self._insert_raw("tests_author", name="Charlie", age=28)
+        self._insert_raw("contenttypes_author", name="Charlie", age=28)
 
         count2 = Author.cached.all().count()
         assert count2 == 2
@@ -138,7 +164,7 @@ class TestQuerySetCaching:
         exists1 = Author.cached.filter(name="Ghost").exists()
         assert exists1 is False
 
-        self._insert_raw("tests_author", name="Ghost", age=99)
+        self._insert_raw("contenttypes_author", name="Ghost", age=99)
 
         exists2 = Author.cached.filter(name="Ghost").exists()
         assert exists2 is False
@@ -150,7 +176,7 @@ class TestQuerySetCaching:
         first1 = Author.cached.order_by("name").first()
         assert first1.name == "Alice"
 
-        self._insert_raw("tests_author", name="Aaron", age=20)
+        self._insert_raw("contenttypes_author", name="Aaron", age=20)
 
         first2 = Author.cached.order_by("name").first()
         assert first2.name == "Alice"
@@ -314,4 +340,191 @@ class TestManagerConfig:
 
         qs = Author.cached.all()
         key = qs._get_cache_key()
-        assert key.startswith("django:tests.author:")
+        assert key.startswith("django:contenttypes.author:")
+
+
+class TestJoinDependencies:
+    def test_join_query_detects_related_deps(self):
+        author = Author.objects.create(name="Alice", age=30)
+        Book.objects.create(title="Wonderland", author=author, published=True)
+
+        qs = Book.cached.filter(author__name="Alice")
+        deps = _get_query_deps(qs)
+        assert "contenttypes.book" in deps
+        assert "contenttypes.author" in deps
+
+    def test_simple_query_only_has_own_dep(self):
+        Author.objects.create(name="Alice", age=30)
+
+        qs = Author.cached.filter(name="Alice")
+        deps = _get_query_deps(qs)
+        assert "contenttypes.author" in deps
+        assert len([d for d in deps if d != "contenttypes.author"]) == 0
+
+    def test_join_invalidated_by_related_model_save(self):
+        author = Author.objects.create(name="Alice", age=30)
+        Book.objects.create(title="Wonderland", author=author, published=True)
+
+        result1 = list(Book.cached.filter(author__name="Alice"))
+        assert len(result1) == 1
+
+        author.name = "Alice Updated"
+        author.save()
+
+        result2 = list(Book.cached.filter(author__name="Alice"))
+        assert len(result2) == 0
+
+    def test_join_invalidated_by_related_model_delete(self):
+        author = Author.objects.create(name="Alice", age=30)
+        book = Book.objects.create(title="Wonderland", author=author, published=True)
+
+        result1 = list(Book.cached.filter(author__name="Alice"))
+        assert len(result1) == 1
+
+        book.delete()
+        author.delete()
+
+        result2 = list(Book.cached.filter(author__name="Alice"))
+        assert len(result2) == 0
+
+    def test_join_count_invalidated_by_related_save(self):
+        author = Author.objects.create(name="Alice", age=30)
+        Book.objects.create(title="Wonderland", author=author, published=True)
+
+        count1 = Book.cached.filter(author__name="Alice").count()
+        assert count1 == 1
+
+        author.name = "Alice Updated"
+        author.save()
+
+        count2 = Book.cached.filter(author__name="Alice").count()
+        assert count2 == 0
+
+    def test_non_join_query_not_affected_by_related_save(self):
+        author = Author.objects.create(name="Alice", age=30)
+        Book.objects.create(title="Wonderland", author=author, published=True)
+
+        result1 = list(Book.cached.filter(title="Wonderland"))
+        assert len(result1) == 1
+
+        author.name = "Alice Updated"
+        author.save()
+
+        result2 = list(Book.cached.filter(title="Wonderland"))
+        assert len(result2) == 1
+
+
+class TestManyToMany:
+    def test_m2m_add_invalidates_cache(self):
+        article = Article.objects.create(title="Python Tips")
+        tag = Tag.objects.create(name="python")
+
+        result1 = list(Article.cached.all())
+        assert len(result1) == 1
+
+        article.tags.add(tag)
+
+        result2 = list(Article.cached.all())
+        assert len(result2) == 1
+        assert result2[0].pk == article.pk
+
+    def test_m2m_remove_invalidates_cache(self):
+        article = Article.objects.create(title="Python Tips")
+        tag = Tag.objects.create(name="python")
+        article.tags.add(tag)
+
+        tagged = list(Article.cached.filter(tags__name="python"))
+        assert len(tagged) == 1
+
+        article.tags.remove(tag)
+
+        tagged_after = list(Article.cached.filter(tags__name="python"))
+        assert len(tagged_after) == 0
+
+    def test_m2m_clear_invalidates_cache(self):
+        article = Article.objects.create(title="Python Tips")
+        tag1 = Tag.objects.create(name="python")
+        tag2 = Tag.objects.create(name="tips")
+        article.tags.add(tag1, tag2)
+
+        count = Article.cached.filter(tags__name="python").count()
+        assert count == 1
+
+        article.tags.clear()
+
+        count_after = Article.cached.filter(tags__name="python").count()
+        assert count_after == 0
+
+    def test_m2m_join_detects_tag_dep(self):
+        article = Article.objects.create(title="Python Tips")
+        tag = Tag.objects.create(name="python")
+        article.tags.add(tag)
+
+        qs = Article.cached.filter(tags__name="python")
+        deps = _get_query_deps(qs)
+        assert "contenttypes.article" in deps
+        assert "contenttypes.tag" in deps
+
+    def test_m2m_invalidates_related_side(self):
+        article = Article.objects.create(title="Python Tips")
+        tag = Tag.objects.create(name="python")
+
+        result1 = list(Tag.cached.all())
+        assert len(result1) == 1
+
+        article.tags.add(tag)
+
+        # Adding a relation invalidates the related model's query too
+        result2 = list(Tag.cached.all())
+        assert len(result2) == 1
+
+    def test_m2m_reverse_query_detects_deps(self):
+        article = Article.objects.create(title="Python Tips")
+        tag = Tag.objects.create(name="python")
+        article.tags.add(tag)
+
+        # Query Tags used in specific Articles (Reverse M2M)
+        qs = Tag.cached.filter(article__title="Python Tips")
+        deps = _get_query_deps(qs)
+        assert "contenttypes.tag" in deps
+        assert "contenttypes.article" in deps
+
+    def test_m2m_reverse_invalidation(self):
+        article = Article.objects.create(title="Python Tips")
+        tag = Tag.objects.create(name="python")
+        article.tags.add(tag)
+
+        # Query tags for this article
+        result1 = list(Tag.cached.filter(article__title="Python Tips"))
+        assert len(result1) == 1
+
+        # Modify article title -> should invalidate Tag query
+        article.title = "Python Advanced"
+        article.save()
+
+        result2 = list(Tag.cached.filter(article__title="Python Tips"))
+        assert len(result2) == 0
+
+    def test_reverse_relation_query_detects_deps(self):
+        author = Author.objects.create(name="Alice", age=30)
+        Book.objects.create(title="Wonderland", author=author, published=True)
+
+        # Query Authors who wrote "Wonderland" (Reverse relation from Author to Book)
+        qs = Author.cached.filter(books__title="Wonderland")
+        deps = _get_query_deps(qs)
+        assert "contenttypes.author" in deps
+        assert "contenttypes.book" in deps
+
+    def test_reverse_relation_invalidation(self):
+        author = Author.objects.create(name="Alice", age=30)
+        book = Book.objects.create(title="Wonderland", author=author, published=True)
+
+        result1 = list(Author.cached.filter(books__title="Wonderland"))
+        assert len(result1) == 1
+
+        # Modify the book title -> should invalidate the Author query
+        book.title = "Wonderland Updated"
+        book.save()
+
+        result2 = list(Author.cached.filter(books__title="Wonderland"))
+        assert len(result2) == 0

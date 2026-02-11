@@ -2,7 +2,7 @@ from hashlib import sha256
 from typing import Optional
 
 from django.db import models
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_save, post_delete, m2m_changed
 
 from zoocache.core import _manager
 
@@ -36,6 +36,39 @@ def _make_cache_key(prefix, model, query_str):
     return f"{base}:{digest}"
 
 
+def _build_table_map(model):
+    table_map = {}
+
+    def _walk(m):
+        if m._meta.db_table in table_map:
+            return
+        table_map[m._meta.db_table] = m
+        for field in m._meta.get_fields():
+            related = getattr(field, "related_model", None)
+            if related and related is not m:
+                _walk(related)
+            through = getattr(getattr(field, "remote_field", None), "through", None)
+            if through and not through._meta.auto_created:
+                _walk(through)
+            elif through and through._meta.auto_created:
+                table_map[through._meta.db_table] = through
+
+    _walk(model)
+    return table_map
+
+
+def _get_query_deps(queryset):
+    table_map = _build_table_map(queryset.model)
+    query_tables = {info.table_name for info in queryset.query.alias_map.values()}
+    labels = set()
+    for table_name in query_tables:
+        matched_model = table_map.get(table_name)
+        if matched_model:
+            labels.add(_model_label(matched_model))
+    labels.add(_model_label(queryset.model))
+    return list(labels)
+
+
 class ZooCacheQuerySet(models.QuerySet):
     _zoo_ttl: Optional[int] = None
     _zoo_prefix: Optional[str] = None
@@ -64,16 +97,14 @@ class ZooCacheQuerySet(models.QuerySet):
         cached = core.get(key)
 
         if cached is not None:
-            self._result_cache = [
-                _raw_to_instance(self.model, row) for row in cached
-            ]
+            self._result_cache = [_raw_to_instance(self.model, row) for row in cached]
             return
 
         super()._fetch_all()
 
         raw_rows = [_model_to_raw(obj) for obj in self._result_cache]
-        label = _model_label(self.model)
-        core.set(key, raw_rows, [label], ttl=self._zoo_ttl)
+        deps = _get_query_deps(self)
+        core.set(key, raw_rows, deps, ttl=self._zoo_ttl)
 
     def count(self):
         core = _manager.get_core()
@@ -85,8 +116,8 @@ class ZooCacheQuerySet(models.QuerySet):
             return cached
 
         result = super().count()
-        label = _model_label(self.model)
-        core.set(key, result, [label], ttl=self._zoo_ttl)
+        deps = _get_query_deps(self)
+        core.set(key, result, deps, ttl=self._zoo_ttl)
         return result
 
     def exists(self):
@@ -99,8 +130,8 @@ class ZooCacheQuerySet(models.QuerySet):
             return cached
 
         result = super().exists()
-        label = _model_label(self.model)
-        core.set(key, result, [label], ttl=self._zoo_ttl)
+        deps = _get_query_deps(self)
+        core.set(key, result, deps, ttl=self._zoo_ttl)
         return result
 
 
@@ -108,6 +139,14 @@ def _invalidate_model(sender, **kwargs):
     label = _model_label(sender)
     core = _manager.get_core()
     core.invalidate(label)
+
+
+def _invalidate_m2m(sender, instance, **kwargs):
+    core = _manager.get_core()
+    core.invalidate(_model_label(instance.__class__))
+    model = kwargs.get("model")
+    if model:
+        core.invalidate(_model_label(model))
 
 
 class ZooCacheManager(models.Manager):
@@ -127,4 +166,7 @@ class ZooCacheManager(models.Manager):
         if not getattr(model, "_zoo_signals_connected", False):
             post_save.connect(_invalidate_model, sender=model, weak=False)
             post_delete.connect(_invalidate_model, sender=model, weak=False)
+            for field in model._meta.local_many_to_many:
+                through = field.remote_field.through
+                m2m_changed.connect(_invalidate_m2m, sender=through, weak=False)
             model._zoo_signals_connected = True

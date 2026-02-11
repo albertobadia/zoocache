@@ -32,6 +32,7 @@ from zoocache.contrib.django import ZooCacheManager  # noqa: E402
 
 # --- Model Definition ---
 
+
 class Product(models.Model):
     name = models.CharField(max_length=100)
     price = models.IntegerField()
@@ -47,10 +48,26 @@ class Product(models.Model):
         return f"Product({self.name}, ${self.price})"
 
 
+class Review(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    score = models.IntegerField()
+    comment = models.CharField(max_length=200)
+
+    objects = models.Manager()
+    cached = ZooCacheManager(ttl=300)
+
+    class Meta:
+        app_label = "shop"
+
+    def __repr__(self):
+        return f"Review({self.comment}, {self.score}/5)"
+
+
 # --- Create tables ---
 
 with connection.schema_editor() as editor:
     editor.create_model(Product)
+    editor.create_model(Review)
 
 
 def run_demo():
@@ -126,6 +143,41 @@ def run_demo():
 
     normal = list(Product.objects.all())
     print(f"  Product.objects.all() always hits DB: {len(normal)} products")
+
+    # --- 7. JOIN dependency detection ---
+    print("\n--- STEP 7: JOIN Dependency Detection ---")
+
+    laptop = Product.objects.get(name="Laptop")
+    Review.objects.create(product=laptop, score=5, comment="Great laptop!")
+    Review.objects.create(product=laptop, score=4, comment="Good value")
+
+    reviews = list(Review.cached.filter(product__name="Laptop"))
+    print(f"  JOIN query (DB hit): {len(reviews)} reviews for Laptop")
+
+    reviews_cached = list(Review.cached.filter(product__name="Laptop"))
+    print(f"  JOIN query (Cache hit): {len(reviews_cached)} reviews")
+
+    laptop.price = 899
+    laptop.save()
+    print("  >> Updated Laptop price (Product.save())")
+
+    reviews_after = list(Review.cached.filter(product__name="Laptop"))
+    print(
+        f"  JOIN query after Product save (invalidated!): {len(reviews_after)} reviews"
+    )
+    print("  The JOIN dependency on Product was detected automatically.")
+
+    # Non-JOIN query stays cached
+    simple = list(Review.cached.filter(score=5))
+    print(f"  Non-JOIN query (DB hit): {len(simple)} reviews with score=5")
+
+    laptop.price = 799
+    laptop.save()
+    print("  >> Updated Laptop price again")
+
+    simple_cached = list(Review.cached.filter(score=5))
+    print(f"  Non-JOIN query (still cached!): {len(simple_cached)} reviews")
+    print("  No JOIN on Product, so Product.save() doesn't invalidate it.")
 
     print("\n" + "=" * 60)
     print("  Demo complete!")

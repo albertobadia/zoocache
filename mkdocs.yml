@@ -47,6 +47,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - User Guide: user_guide.md
+  - Django Integration: django.md
   - Architecture: architecture.md
   - Serialization: serialization.md
   - Reliability: reliability.md
