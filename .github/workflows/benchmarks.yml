@@ -52,17 +52,14 @@ jobs:
           commit_message: "docs: update benchmark results in README"
 
       - name: Store benchmark result
+        run: git stash
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Python Benchmark
           tool: 'pytest'
           output-file-path: benchmarks/output.json
           fail-on-alert: true
-          # GitHub API token to make a commit comment
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Push and deploy to GitHub pages automatically
           auto-push: true
-          # URL to the dashboard (e.g. https://user.github.io/repo/dev/bench/)
-          # gh-pages branch is used by default
           comment-on-alert: true
           alert-threshold: '150%'
