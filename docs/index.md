@@ -112,6 +112,14 @@ Explore the deep dives into Zoocache's architecture and features:
 
 ---
 
+## 📊 Performance Benchmarks
+
+<iframe src="dev/bench/index.html" width="100%" height="800" frameborder="0"></iframe>
+
+[**View Full Benchmarks Page**](dev/bench/)
+
+---
+
 ## ❓ When to Use Zoocache
 
 ### ✅ Good Fit
