@@ -65,6 +65,7 @@ jobs:
           name: Python Benchmark
           tool: 'pytest'
           output-file-path: benchmarks/output.json
+          benchmark-data-dir-path: docs/benchmarks
           fail-on-alert: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
