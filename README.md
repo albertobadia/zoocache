@@ -99,6 +99,8 @@ Explore the deep dives into Zoocache's architecture and features:
 - [**Serialization Pipeline**](docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
 - [**Concurrency & SingleFlight**](docs/concurrency.md) - Shielding your database from traffic spikes.
 - [**Distributed Consistency**](docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
+- [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
+- [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
 - [**Reliability & Edge Cases**](docs/reliability.md) - Fail-fast mechanisms and memory management.
 
 ---

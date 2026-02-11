@@ -1053,6 +1053,12 @@ wheels = [
 name = "zoocache"
 source = { editable = "." }
 
+[package.optional-dependencies]
+django = [
+    { name = "django", version = "5.2.11", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "django", version = "6.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "django", version = "5.2.11", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1073,6 +1079,8 @@ docs = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "django", marker = "extra == 'django'", specifier = ">=5.2.11" }]
+provides-extras = ["django"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -13,6 +13,9 @@ requires-python = ">=3.10"
 
 dependencies = []
 
+[project.optional-dependencies]
+django = ["django>=5.2.11"]
+
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
