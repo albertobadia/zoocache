@@ -14,7 +14,8 @@ settings.configure(
 django.setup()
 
 import pytest  # noqa: E402
-from django.db import connection, models  # noqa: E402
+import django.test.utils  # noqa: E402
+from django.db import connection, models, transaction  # noqa: E402
 
 import zoocache  # noqa: E402
 from zoocache.contrib.django import (  # noqa: E402
@@ -528,3 +529,93 @@ class TestManyToMany:
 
         result2 = list(Author.cached.filter(books__title="Wonderland"))
         assert len(result2) == 0
+
+
+class TestTransactions:
+    def test_rollback_does_not_invalidate(self):
+        Author.objects.create(name="Alice", age=30)
+
+        # Initial cache population
+        assert len(list(Author.cached.all())) == 1
+
+        try:
+            with transaction.atomic():
+                Author.objects.create(name="Bob", age=25)
+                # Invalidation should be deferred until commit...
+                # ...but we force a rollback
+                raise ValueError("Rollback")
+        except ValueError:
+            pass
+
+        # Should still be 1 (Bob was rolled back, invalidation never happened)
+        # Note: In SQLite in-memory, if on_commit works, the cache remains valid.
+        assert len(list(Author.cached.all())) == 1
+
+    def test_commit_invalidates(self):
+        Author.objects.create(name="Alice", age=30)
+        assert len(list(Author.cached.all())) == 1
+
+        with transaction.atomic():
+            Author.objects.create(name="Bob", age=25)
+
+        # Now committed -> invalidation should have run
+        assert len(list(Author.cached.all())) == 2
+
+
+class TestPrefetchRelated:
+    def test_prefetch_restored_from_cache(self):
+        author = Author.objects.create(name="Alice", age=30)
+        Book.objects.create(title="B1", author=author)
+        Book.objects.create(title="B2", author=author)
+
+        # 1. First query (DB hit)
+        with django.test.utils.CaptureQueriesContext(connection) as ctx:
+            qs = Author.cached.prefetch_related("books")
+            results = list(qs)
+            assert len(results) == 1
+            assert len(results[0].books.all()) == 2
+            # Should be 2 queries: 1 for Author, 1 for Books
+            assert len(ctx) == 2
+
+        # 2. Second query (Cache hit)
+        with django.test.utils.CaptureQueriesContext(connection) as ctx:
+            qs = Author.cached.prefetch_related("books")
+            results = list(qs)
+            assert len(results) == 1
+
+            # Accessing books should NOT trigger new queries if prefetch worked
+            assert len(results[0].books.all()) == 2
+
+            # Expectation:
+            # 0 queries if we implemented full result caching including relations (hard)
+            # OR 1 query if we just re-run the prefetch on cached instances (current approach)
+            # Current approach implementation:
+            #   - Cache hit for Author: 0 DB queries
+            #   - prefetch_related_objects triggers: 1 DB query for Books
+            # Total: 1 query (better than N+1)
+            assert len(ctx) == 1
+
+
+class TestSelectRelated:
+    def test_select_related_caches_related_object(self):
+        author = Author.objects.create(name="Alice", age=30)
+        book = Book.objects.create(title="Wonderland", author=author)
+
+        # 1. First query (DB hit) -> Should fetch Book + Author in 1 query
+        with django.test.utils.CaptureQueriesContext(connection) as ctx:
+            qs = Book.cached.select_related("author").filter(pk=book.pk)
+            result = list(qs)[0]
+            assert result.title == "Wonderland"
+            # Accessing author should NOT fail and NOT query DB
+            assert result.author.name == "Alice"
+            assert len(ctx) == 1
+
+        # 2. Second query (Cache hit) -> Should restore Book AND Author from cache
+        with django.test.utils.CaptureQueriesContext(connection) as ctx:
+            qs = Book.cached.select_related("author").filter(pk=book.pk)
+            result = list(qs)[0]
+            assert result.title == "Wonderland"
+
+            # Accessing author should come from _state.fields_cache, NO DB query
+            assert result.author.name == "Alice"
+            assert len(ctx) == 0

@@ -1,7 +1,8 @@
 from hashlib import sha256
 from typing import Optional
-
-from django.db import models
+from django.apps import apps
+from django.db import models, transaction
+from django.db.models import prefetch_related_objects
 from django.db.models.signals import post_save, post_delete, m2m_changed
 
 from zoocache.core import _manager
@@ -19,13 +20,31 @@ def _model_to_raw(instance):
             data[field.attname] = value
         else:
             data[field.attname] = str(value)
+    if hasattr(instance._state, "fields_cache"):
+        related_data = {}
+        for field_name, related_inst in instance._state.fields_cache.items():
+            if related_inst:
+                related_data[field_name] = {
+                    "model_label": _model_label(related_inst.__class__),
+                    "data": _model_to_raw(related_inst),
+                }
+        if related_data:
+            data["_zoo_related"] = related_data
     return data
 
 
-def _raw_to_instance(model, data):
+def _raw_to_instance(model, data, db="default"):
+    related_data = data.pop("_zoo_related", None)
     instance = model(**data)
+
+    if related_data:
+        for field_name, rel_info in related_data.items():
+            rel_model = apps.get_model(rel_info["model_label"])
+            rel_instance = _raw_to_instance(rel_model, rel_info["data"], db=db)
+            instance._state.fields_cache[field_name] = rel_instance
+
     instance._state.adding = False
-    instance._state.db = "default"
+    instance._state.db = db
     return instance
 
 
@@ -47,11 +66,14 @@ def _build_table_map(model):
             related = getattr(field, "related_model", None)
             if related and related is not m:
                 _walk(related)
-            through = getattr(getattr(field, "remote_field", None), "through", None)
-            if through and not through._meta.auto_created:
-                _walk(through)
-            elif through and through._meta.auto_created:
-                table_map[through._meta.db_table] = through
+
+            remote = getattr(field, "remote_field", None)
+            through = getattr(remote, "through", None)
+            if through:
+                if through._meta.auto_created:
+                    table_map[through._meta.db_table] = through
+                else:
+                    _walk(through)
 
     _walk(model)
     return table_map
@@ -60,11 +82,7 @@ def _build_table_map(model):
 def _get_query_deps(queryset):
     table_map = _build_table_map(queryset.model)
     query_tables = {info.table_name for info in queryset.query.alias_map.values()}
-    labels = set()
-    for table_name in query_tables:
-        matched_model = table_map.get(table_name)
-        if matched_model:
-            labels.add(_model_label(matched_model))
+    labels = {_model_label(table_map[t]) for t in query_tables if t in table_map}
     labels.add(_model_label(queryset.model))
     return list(labels)
 
@@ -97,7 +115,13 @@ class ZooCacheQuerySet(models.QuerySet):
         cached = core.get(key)
 
         if cached is not None:
-            self._result_cache = [_raw_to_instance(self.model, row) for row in cached]
+            self._result_cache = [
+                _raw_to_instance(self.model, row, db=self.db) for row in cached
+            ]
+            if self._prefetch_related_lookups:
+                prefetch_related_objects(
+                    self._result_cache, *self._prefetch_related_lookups
+                )
             return
 
         super()._fetch_all()
@@ -137,16 +161,23 @@ class ZooCacheQuerySet(models.QuerySet):
 
 def _invalidate_model(sender, **kwargs):
     label = _model_label(sender)
-    core = _manager.get_core()
-    core.invalidate(label)
+
+    def _do_invalidate():
+        core = _manager.get_core()
+        core.invalidate(label)
+
+    transaction.on_commit(_do_invalidate)
 
 
 def _invalidate_m2m(sender, instance, **kwargs):
-    core = _manager.get_core()
-    core.invalidate(_model_label(instance.__class__))
-    model = kwargs.get("model")
-    if model:
-        core.invalidate(_model_label(model))
+    def _do_invalidate():
+        core = _manager.get_core()
+        core.invalidate(_model_label(instance.__class__))
+        model = kwargs.get("model")
+        if model:
+            core.invalidate(_model_label(model))
+
+    transaction.on_commit(_do_invalidate)
 
 
 class ZooCacheManager(models.Manager):

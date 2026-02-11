@@ -42,7 +42,7 @@ class Product(models.Model):
     cached = ZooCacheManager(ttl=300)
 
     class Meta:
-        app_label = "shop"
+        app_label = "contenttypes"
 
     def __repr__(self):
         return f"Product({self.name}, ${self.price})"
@@ -57,7 +57,7 @@ class Review(models.Model):
     cached = ZooCacheManager(ttl=300)
 
     class Meta:
-        app_label = "shop"
+        app_label = "contenttypes"
 
     def __repr__(self):
         return f"Review({self.comment}, {self.score}/5)"
@@ -178,6 +178,49 @@ def run_demo():
     simple_cached = list(Review.cached.filter(score=5))
     print(f"  Non-JOIN query (still cached!): {len(simple_cached)} reviews")
     print("  No JOIN on Product, so Product.save() doesn't invalidate it.")
+
+    # --- 8. Query Optimizations (select_related) ---
+    print("\n--- STEP 8: select_related Support ---")
+
+    # 1. DB Hit: Fetches Review + Product in 1 query
+    review = Review.cached.select_related("product").first()
+    print(f"  Fetched review: {review}")
+    print(f"  Accessing related product from cache: {review.product}")
+
+    # 2. Cache Hit: Restores Review AND Product from cache
+    review_cached = Review.cached.select_related("product").first()
+    print(f"  Fetched review (cached): {review_cached}")
+    print(f"  Accessing related product (no DB hit): {review_cached.product}")
+
+    # --- 9. Query Optimizations (prefetch_related) ---
+    print("\n--- STEP 9: prefetch_related Support ---")
+
+    # 1. DB Hit: 1 query for Products + 1 query for Reviews
+    product = Product.cached.prefetch_related("review_set").first()
+    print(f"  Fetched product: {product}")
+    print(f"  Prefetched reviews: {list(product.review_set.all())}")
+
+    # 2. Cache Hit: 0 queries for Product + 1 query to restore Reviews (standard prefetch behavior)
+    product_cached = Product.cached.prefetch_related("review_set").first()
+    print(f"  Fetched product (cached): {product_cached}")
+    print(f"  Prefetched reviews (restored): {list(product_cached.review_set.all())}")
+
+    # --- 10. Transaction Support ---
+    print("\n--- STEP 10: Transaction Support ---")
+    from django.db import transaction
+
+    print("  Starting transaction...")
+    try:
+        with transaction.atomic():
+            Product.objects.create(name="RolledBack", price=0, category="misc")
+            print("  >> Created 'RolledBack' inside transaction")
+            raise ValueError("Rolling back!")
+    except ValueError:
+        print("  >> Transaction rolled back")
+
+    # Cache should NOT be invalidated because the transaction failed
+    count = Product.cached.count()
+    print(f"  Product count (should be same as before): {count}")
 
     print("\n" + "=" * 60)
     print("  Demo complete!")

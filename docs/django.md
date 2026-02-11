@@ -67,6 +67,49 @@ Product.cached.filter(price__lt=100).count()
 
 No manual invalidation is needed for standard ORM operations.
 
+## Transaction Support
+ 
+ZooCache is transaction-aware. Invalidation is automatically deferred until the transaction commits successfully using `transaction.on_commit()`.
+ 
+- **Rollback**: If a transaction is rolled back, the cache is **NOT** invalidated.
+- **Commit**: Invalidation happens only after the data is safely persisted.
+ 
+```python
+from django.db import transaction
+ 
+with transaction.atomic():
+    product.price = 200
+    product.save()
+    # Cache is NOT invalidated yet (pending commit)
+    raise ValueError("Rollback!")
+ 
+# Transaction rolled back -> Cache remains valid (no invalidation)
+```
+ 
+## Query Optimizations
+ 
+ZooCache supports Django's query optimizations out of the box:
+ 
+### `select_related`
+ 
+Foreign key objects are recursively serialized and cached. When fetching from cache, the related objects are fully reconstructed, so accessing them does **not** trigger a database query.
+ 
+```python
+# Fetches Book + Author in 1 query (or 0 if cached)
+book = Book.cached.select_related("author").get(pk=1)
+print(book.author.name)  # No DB hit, author is loaded from cache
+```
+ 
+### `prefetch_related`
+ 
+Prefetching is automatically restored on cache hits. ZooCache detects the prefetch request and efficiently populates related objects on the cached instances.
+ 
+```python
+# Fetches Author + Books in 2 queries (or 1 query for books if Author is cached)
+author = Author.cached.prefetch_related("books").get(pk=1)
+print(author.books.all())  # No N+1 problem, books are prefetched
+```
+ 
 ## JOIN Dependency Detection
 
 When a query involves a JOIN (e.g., filtering by a related model's field), ZooCache
@@ -193,3 +236,27 @@ products = Product.cached.filter(category="misc")
 
 See [`examples/django_adapter_demo.py`](https://github.com/albertobadia/zoocache/blob/main/examples/django_adapter_demo.py)
 for a self-contained, runnable demo covering all features.
+
+## Known Limitations
+
+### Bulk Operations
+Django's `update()`, `bulk_create()`, and `bulk_update()` methods **do not send signals**.
+Therefore, ZooCache cannot detect these changes, and the cache will remain stale until the TTL expires.
+
+```python
+# WARNING: This does NOT invalidate the cache!
+Product.objects.filter(category="old").update(active=False)
+```
+
+**Workaround**: Manually invalidate the model after bulk operations:
+```python
+from zoocache.core import _manager
+_manager.get_core().invalidate("shop.product")
+```
+
+### Annotations
+Fields added via `.annotate()` are currently **not cached**. When an object is retrieved from the cache, the annotated fields will be missing.
+
+### Defer / Only
+`ZooCache` always caches the **full object**, ignoring `defer()` and `only()`.
+Calls to `.defer('field')` will return objects with all fields loaded (from cache).
