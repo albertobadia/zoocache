@@ -1,0 +1,4 @@
+- **CPU**: Apple M1
+- **Cores**: 8
+- **Memory**: 8 GB
+- **OS**: Darwin arm64

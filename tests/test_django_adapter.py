@@ -86,17 +86,11 @@ def setup_db():
     zoocache.clear()
     with connection.schema_editor() as editor:
         for model in [Author, Book, PrefixedItem, Tag, Article]:
-            try:
-                editor.create_model(model)
-            except Exception:
-                pass
+            editor.create_model(model)
     yield
     with connection.schema_editor() as editor:
         for model in [Article, Tag, PrefixedItem, Book, Author]:
-            try:
-                editor.delete_model(model)
-            except Exception:
-                pass
+            editor.delete_model(model)
     zoocache.reset()
 
 
@@ -568,31 +562,19 @@ class TestPrefetchRelated:
         Book.objects.create(title="B1", author=author)
         Book.objects.create(title="B2", author=author)
 
-        # 1. First query (DB hit)
         with django.test.utils.CaptureQueriesContext(connection) as ctx:
             qs = Author.cached.prefetch_related("books")
             results = list(qs)
             assert len(results) == 1
             assert len(results[0].books.all()) == 2
-            # Should be 2 queries: 1 for Author, 1 for Books
             assert len(ctx) == 2
 
-        # 2. Second query (Cache hit)
         with django.test.utils.CaptureQueriesContext(connection) as ctx:
             qs = Author.cached.prefetch_related("books")
             results = list(qs)
             assert len(results) == 1
-
-            # Accessing books should NOT trigger new queries if prefetch worked
             assert len(results[0].books.all()) == 2
-
-            # Expectation:
-            # 0 queries if we implemented full result caching including relations (hard)
-            # OR 1 query if we just re-run the prefetch on cached instances (current approach)
-            # Current approach implementation:
-            #   - Cache hit for Author: 0 DB queries
-            #   - prefetch_related_objects triggers: 1 DB query for Books
-            # Total: 1 query (better than N+1)
+            # 1 query for Books prefetch (0 for Author cache hit)
             assert len(ctx) == 1
 
 
@@ -601,21 +583,16 @@ class TestSelectRelated:
         author = Author.objects.create(name="Alice", age=30)
         book = Book.objects.create(title="Wonderland", author=author)
 
-        # 1. First query (DB hit) -> Should fetch Book + Author in 1 query
         with django.test.utils.CaptureQueriesContext(connection) as ctx:
             qs = Book.cached.select_related("author").filter(pk=book.pk)
             result = list(qs)[0]
             assert result.title == "Wonderland"
-            # Accessing author should NOT fail and NOT query DB
             assert result.author.name == "Alice"
             assert len(ctx) == 1
 
-        # 2. Second query (Cache hit) -> Should restore Book AND Author from cache
         with django.test.utils.CaptureQueriesContext(connection) as ctx:
             qs = Book.cached.select_related("author").filter(pk=book.pk)
             result = list(qs)[0]
             assert result.title == "Wonderland"
-
-            # Accessing author should come from _state.fields_cache, NO DB query
             assert result.author.name == "Alice"
             assert len(ctx) == 0

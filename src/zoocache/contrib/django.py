@@ -7,6 +7,8 @@ from django.db.models.signals import post_save, post_delete, m2m_changed
 
 from zoocache.core import _manager
 
+INTERNAL_CACHE_KEY_RELATED = "_zoo_related"
+
 
 def _model_label(model):
     return f"{model._meta.app_label}.{model._meta.model_name}"
@@ -29,12 +31,12 @@ def _model_to_raw(instance):
                     "data": _model_to_raw(related_inst),
                 }
         if related_data:
-            data["_zoo_related"] = related_data
+            data[INTERNAL_CACHE_KEY_RELATED] = related_data
     return data
 
 
 def _raw_to_instance(model, data, db="default"):
-    related_data = data.pop("_zoo_related", None)
+    related_data = data.pop(INTERNAL_CACHE_KEY_RELATED, None)
     instance = model(**data)
 
     if related_data:
@@ -88,8 +90,14 @@ def _get_query_deps(queryset):
 
 
 class ZooCacheQuerySet(models.QuerySet):
+    """QuerySet that transparently caches results and validates dependencies."""
+
     _zoo_ttl: Optional[int] = None
     _zoo_prefix: Optional[str] = None
+
+    @property
+    def _core(self):
+        return _manager.get_core()
 
     def _clone(self):
         qs = super()._clone()
@@ -110,9 +118,8 @@ class ZooCacheQuerySet(models.QuerySet):
         if self._result_cache is not None:
             return
 
-        core = _manager.get_core()
         key = self._get_cache_key()
-        cached = core.get(key)
+        cached = self._core.get(key)
 
         if cached is not None:
             self._result_cache = [
@@ -128,59 +135,53 @@ class ZooCacheQuerySet(models.QuerySet):
 
         raw_rows = [_model_to_raw(obj) for obj in self._result_cache]
         deps = _get_query_deps(self)
-        core.set(key, raw_rows, deps, ttl=self._zoo_ttl)
+        self._core.set(key, raw_rows, deps, ttl=self._zoo_ttl)
 
     def count(self):
-        core = _manager.get_core()
         fingerprint = f"count:{self._get_query_fingerprint()}"
         key = _make_cache_key(self._zoo_prefix, self.model, fingerprint)
-        cached = core.get(key)
+        cached = self._core.get(key)
 
         if cached is not None:
             return cached
 
         result = super().count()
         deps = _get_query_deps(self)
-        core.set(key, result, deps, ttl=self._zoo_ttl)
+        self._core.set(key, result, deps, ttl=self._zoo_ttl)
         return result
 
     def exists(self):
-        core = _manager.get_core()
         fingerprint = f"exists:{self._get_query_fingerprint()}"
         key = _make_cache_key(self._zoo_prefix, self.model, fingerprint)
-        cached = core.get(key)
+        cached = self._core.get(key)
 
         if cached is not None:
             return cached
 
         result = super().exists()
         deps = _get_query_deps(self)
-        core.set(key, result, deps, ttl=self._zoo_ttl)
+        self._core.set(key, result, deps, ttl=self._zoo_ttl)
         return result
 
 
 def _invalidate_model(sender, **kwargs):
     label = _model_label(sender)
-
-    def _do_invalidate():
-        core = _manager.get_core()
-        core.invalidate(label)
-
-    transaction.on_commit(_do_invalidate)
+    transaction.on_commit(lambda: _manager.get_core().invalidate(label))
 
 
-def _invalidate_m2m(sender, instance, **kwargs):
+def _invalidate_m2m(instance, **kwargs):
     def _do_invalidate():
         core = _manager.get_core()
         core.invalidate(_model_label(instance.__class__))
-        model = kwargs.get("model")
-        if model:
-            core.invalidate(_model_label(model))
+        if model_val := kwargs.get("model"):
+            core.invalidate(_model_label(model_val))
 
     transaction.on_commit(_do_invalidate)
 
 
 class ZooCacheManager(models.Manager):
+    """Custom manager that enables transparent caching for Django models."""
+
     def __init__(self, *, ttl=None, prefix=None):
         super().__init__()
         self._zoo_ttl = ttl
