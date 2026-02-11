@@ -129,6 +129,40 @@ for book in books:
 cached = ZooCacheManager(ttl=60, prefix="fast_cache")
 ```
 
+### Global Configuration
+
+The preferred way to configure ZooCache in Django is by adding a `ZOOCACHE` dictionary to your `settings.py`. ZooCache will automatically detect these settings.
+
+```python
+# settings.py
+
+ZOOCACHE = {
+    "storage_url": "redis://localhost:6379",
+    "bus_url": "redis://localhost:6379",
+    "default_ttl": 3600,
+}
+```
+
+#### Alternative: Manual Configuration
+
+If you need more control or want to configure ZooCache programmatically, you can still use the `AppConfig.ready()` pattern:
+
+```python
+# myapp/apps.py
+from django.apps import AppConfig
+import zoocache
+
+class MyAppConfig(AppConfig):
+    name = 'myapp'
+
+    def ready(self):
+        # This will only run if ZOOCACHE is not defined in settings.py
+        zoocache.configure(
+            storage_url="redis://localhost:6379",
+            default_ttl=3600
+        )
+```
+
 ---
 
 ## Best Practices
