@@ -179,6 +179,17 @@ def _invalidate_m2m(instance, **kwargs):
     transaction.on_commit(_do_invalidate)
 
 
+def _auto_configure():
+    """Attempt to configure ZooCache from Django settings."""
+    if _manager.is_configured():
+        return
+
+    from django.conf import settings
+
+    if conf := getattr(settings, "ZOOCACHE", None):
+        _manager.configure(**conf)
+
+
 class ZooCacheManager(models.Manager):
     """Custom manager that enables transparent caching for Django models."""
 
@@ -195,6 +206,7 @@ class ZooCacheManager(models.Manager):
 
     def contribute_to_class(self, model, name):
         super().contribute_to_class(model, name)
+        _auto_configure()
         if not getattr(model, "_zoo_signals_connected", False):
             post_save.connect(_invalidate_model, sender=model, weak=False)
             post_delete.connect(_invalidate_model, sender=model, weak=False)

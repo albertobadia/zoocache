@@ -15,9 +15,15 @@ class CacheManager:
         self.config: Dict[str, Any] = {}
         self._op_count: int = 0
 
+    def is_configured(self) -> bool:
+        return self.core is not None or bool(self.config)
+
     def configure(self, **kwargs) -> None:
-        if self.core is not None:
-            raise RuntimeError("zoocache already initialized")
+        if self.is_configured() and any(
+            self.config.get(k) != v for k, v in kwargs.items()
+        ):
+            # Only raise if trying to change an existing configuration
+            raise RuntimeError("zoocache already initialized with different settings")
         self.config = kwargs
 
     def get_core(self) -> Core:
