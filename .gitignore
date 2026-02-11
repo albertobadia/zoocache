@@ -22,6 +22,10 @@ target/
 # LMDB files
 *.mdb
 
+# Benchmark results (generated during CI runs)
+benchmarks/output.json
+benchmarks/django_output.json
+
 
 # Docs files
 site/

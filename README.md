@@ -20,6 +20,7 @@
   <a href="https://pypi.org/project/zoocache/"><img alt="PyPI" src="https://img.shields.io/pypi/v/zoocache?style=flat-square&logo=pypi&logoColor=white"></a>
   <a href="https://pypi.org/project/zoocache/"><img alt="Downloads" src="https://img.shields.io/pepy/dt/zoocache?style=flat-square&color=blue"></a>
   <a href="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/albertobadia/zoocache/ci.yml?branch=main&style=flat-square&logo=github"></a>
+  <a href="https://albertobadia.github.io/zoocache/main/bench/"><img alt="Benchmarks" src="https://img.shields.io/badge/benchmarks-charts-orange?style=flat-square&logo=google-cloud&logoColor=white"></a>
   <a href="https://zoocache.readthedocs.io/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/zoocache?style=flat-square&logo=readthedocs"></a>
 </p>
 
@@ -98,6 +99,8 @@ Explore the deep dives into Zoocache's architecture and features:
 - [**Serialization Pipeline**](docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
 - [**Concurrency & SingleFlight**](docs/concurrency.md) - Shielding your database from traffic spikes.
 - [**Distributed Consistency**](docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
+- [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
+- [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
 - [**Reliability & Edge Cases**](docs/reliability.md) - Fail-fast mechanisms and memory management.
 
 ---
@@ -110,6 +113,15 @@ Explore the deep dives into Zoocache's architecture and features:
 | **Consistency** | 🛡️ **Causal (HLC)** | ❌ Eventual | ❌ No | ❌ No |
 | **Anti-Avalanche** | ✅ **Native** | ❌ No | ✅ Yes (Locks) | ❌ No |
 | **Performance** | 🚀 **Very High** | 🏎️ High | 🐢 Medium | 🐢 Medium |
+
+---
+
+## 🚀 Performance
+
+Zoocache is continuously benchmarked to ensure zero performance regressions. We track micro-latency, scaling with dependencies, and storage overhead.
+
+<!-- AUTO-GENERATED-CONTENT:START (SOURCES:src=benchmarks/reports/benchmarks_summary.md) -->
+<!-- AUTO-GENERATED-CONTENT:END -->
 
 ---
 

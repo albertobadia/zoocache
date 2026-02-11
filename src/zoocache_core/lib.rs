@@ -30,9 +30,9 @@ fn validate_tag(tag: &str) -> PyResult<()> {
         if c == ':' {
             depth += 1;
         }
-        if !c.is_alphanumeric() && c != '_' && c != ':' {
+        if !c.is_alphanumeric() && c != '_' && c != ':' && c != '.' {
             return Err(InvalidTag::new_err(format!(
-                "Invalid character '{}' in tag '{}'. Only alphanumeric, '_' and ':' are allowed.",
+                "Invalid character '{}' in tag '{}'. Only alphanumeric, '_', ':' and '.' are allowed.",
                 c, tag
             )));
         }
