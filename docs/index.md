@@ -6,4 +6,4 @@
   </picture>
 </p>
 
-{% include-markdown "../README.md" start="</p>" %}
+{% include-markdown "../README.md" %}
