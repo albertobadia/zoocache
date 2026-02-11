@@ -114,9 +114,13 @@ Explore the deep dives into Zoocache's architecture and features:
 
 ## 📊 Performance Benchmarks
 
-<iframe src="dev/bench/index.html" width="100%" height="800" frameborder="0"></iframe>
+<div align="center" markdown="1">
 
-[**View Full Benchmarks Page**](dev/bench/)
+[![Benchmarks](https://img.shields.io/badge/view-benchmarks-orange?style=for-the-badge&logo=google-cloud)](dev/bench/)
+
+</div>
+
+[View Detailed Benchmark Results](dev/bench/)
 
 ---
 
