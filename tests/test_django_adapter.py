@@ -705,3 +705,25 @@ class TestValuesQueries:
         # Second hit from cache
         res2 = list(ValuesModel.cached.values_list("name", flat=True))
         assert res2 == res1
+
+
+class TestDjangoRecursion:
+    def test_circular_reference(self):
+        # We can't easily trigger a circular reference with real DB data and standard Django,
+        # but we can simulate what happens if fields_cache is monkeypatched or has cycles.
+        author = Author(id=1, name="Alice")
+        book = Book(id=1, title="Wonderland", author=author)
+
+        # Manually create a cycle: Alice -> Wonderland -> Alice
+        author._state.fields_cache["books"] = [book]
+        # book is already linked to author via its own fields_cache (select_related style)
+        book._state.fields_cache["author"] = author
+
+        # This used to cause RecursionError, now should be safe
+        raw = _model_to_raw(author)
+        assert raw["id"] == 1
+        assert "books" in raw["_zoo_related"]
+
+        # Verify reconstruction doesn't crash
+        restored = _raw_to_instance(Author, raw)
+        assert restored.id == 1

@@ -18,7 +18,21 @@ def _model_label(model):
 _json_encoder = DjangoJSONEncoder()
 
 
-def _model_to_raw(instance):
+def _model_to_raw(instance, visited=None):
+    if visited is None:
+        visited = set()
+
+    if isinstance(instance, (list, tuple)):
+        return [_model_to_raw(i, visited=visited) for i in instance]
+
+    if not hasattr(instance, "_meta"):
+        return None
+
+    obj_id = (instance.__class__, instance.pk) if instance.pk else id(instance)
+    if obj_id in visited:
+        return None
+    visited.add(obj_id)
+
     data = {}
     for field in instance._meta.concrete_fields:
         value = field.value_from_object(instance)
@@ -33,10 +47,19 @@ def _model_to_raw(instance):
         related_data = {}
         for field_name, related_inst in instance._state.fields_cache.items():
             if related_inst:
-                related_data[field_name] = {
-                    "model_label": _model_label(related_inst.__class__),
-                    "data": _model_to_raw(related_inst),
-                }
+                rel_data = _model_to_raw(related_inst, visited=visited)
+                if rel_data:
+                    if isinstance(related_inst, (list, tuple)):
+                        if not related_inst:
+                            continue
+                        label = _model_label(related_inst[0].__class__)
+                    else:
+                        label = _model_label(related_inst.__class__)
+
+                    related_data[field_name] = {
+                        "model_label": label,
+                        "data": rel_data,
+                    }
         if related_data:
             data[INTERNAL_CACHE_KEY_RELATED] = related_data
     return data
@@ -59,7 +82,11 @@ def _raw_to_instance(model, data, db="default"):
             instance._state.fields_cache = {}
         for field_name, rel_info in related_data.items():
             rel_model = apps.get_model(rel_info["model_label"])
-            rel_instance = _raw_to_instance(rel_model, rel_info["data"], db=db)
+            data_val = rel_info["data"]
+            if isinstance(data_val, list):
+                rel_instance = [_raw_to_instance(rel_model, d, db=db) for d in data_val]
+            else:
+                rel_instance = _raw_to_instance(rel_model, data_val, db=db)
             instance._state.fields_cache[field_name] = rel_instance
 
     instance._state.adding = False
