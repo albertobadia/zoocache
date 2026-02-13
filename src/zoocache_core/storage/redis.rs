@@ -12,6 +12,14 @@ pub(crate) struct RedisStorage {
     prefix: String,
 }
 
+const GET_AND_TOUCH_SCRIPT: &str = r#"
+    local val = redis.call('GET', KEYS[1])
+    if val then
+        redis.call('ZADD', KEYS[2], ARGV[1], ARGV[2])
+    end
+    return val
+"#;
+
 impl RedisStorage {
     pub fn new(url: &str, prefix: Option<&str>) -> Result<Self, redis::RedisError> {
         let client = Client::open(url)?;
@@ -40,18 +48,29 @@ impl Storage for RedisStorage {
             Ok(c) => c,
             Err(_) => return super::StorageResult::NotFound,
         };
-        let data: Vec<u8> = match conn.get(self.full_key(key)) {
+
+        // Atomic GET + LRU update using Lua
+        let now = now_secs() as f64;
+        let script = redis::Script::new(GET_AND_TOUCH_SCRIPT);
+        let data: Vec<u8> = match script
+            .key(self.full_key(key))
+            .key(self.lru_key())
+            .arg(now)
+            .arg(key)
+            .invoke(&mut conn)
+        {
             Ok(d) => d,
             Err(_) => return super::StorageResult::NotFound,
         };
 
+        if data.is_empty() {
+            return super::StorageResult::NotFound;
+        }
+
         let result = Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new));
 
         match result {
-            Some(entry) => {
-                let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), key, now_secs() as f64);
-                super::StorageResult::Hit(entry)
-            }
+            Some(entry) => super::StorageResult::Hit(entry),
             None => super::StorageResult::NotFound,
         }
     }
