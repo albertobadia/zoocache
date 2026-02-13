@@ -35,17 +35,25 @@ impl RedisStorage {
 }
 
 impl Storage for RedisStorage {
-    fn get(&self, key: &str) -> Option<Arc<CacheEntry>> {
-        let mut conn = self.pool.get().ok()?;
-        let data: Vec<u8> = conn.get(self.full_key(key)).ok()?;
+    fn get(&self, key: &str) -> super::StorageResult {
+        let mut conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(_) => return super::StorageResult::NotFound,
+        };
+        let data: Vec<u8> = match conn.get(self.full_key(key)) {
+            Ok(d) => d,
+            Err(_) => return super::StorageResult::NotFound,
+        };
 
         let result = Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new));
 
-        if result.is_some() {
-            let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), key, now_secs() as f64);
+        match result {
+            Some(entry) => {
+                let _: redis::RedisResult<()> = conn.zadd(self.lru_key(), key, now_secs() as f64);
+                super::StorageResult::Hit(entry)
+            }
+            None => super::StorageResult::NotFound,
         }
-
-        result
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {

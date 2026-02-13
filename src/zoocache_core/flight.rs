@@ -63,13 +63,13 @@ pub(crate) fn complete_flight(
     None
 }
 
-pub(crate) fn wait_for_flight(flight: &Flight) -> FlightStatus {
+pub(crate) fn wait_for_flight(flight: &Flight, timeout_secs: u64) -> FlightStatus {
     let mut state = match flight.state.lock() {
         Ok(s) => s,
         Err(_e) => return FlightStatus::Error, // Poisoned
     };
 
-    let timeout = std::time::Duration::from_secs(60);
+    let timeout = std::time::Duration::from_secs(timeout_secs);
     let start = std::time::Instant::now();
 
     while state.0 == FlightStatus::Pending {

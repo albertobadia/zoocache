@@ -28,7 +28,13 @@ class CacheManager:
 
     def get_core(self) -> Core:
         if self.core is None:
-            core_args = {k: v for k, v in self.config.items() if k != "prune_after"}
+            core_args = {
+                k: v
+                for k, v in self.config.items()
+                if k not in ("prune_after", "flight_timeout")
+            }
+            if timeout := self.config.get("flight_timeout"):
+                core_args["flight_timeout"] = timeout
             self.core = Core(**core_args)
         return self.core
 
@@ -58,6 +64,7 @@ def configure(
     read_extend_ttl: bool = True,
     max_entries: Optional[int] = None,
     lmdb_map_size: Optional[int] = None,
+    flight_timeout: int = 60,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -68,6 +75,7 @@ def configure(
         read_extend_ttl=read_extend_ttl,
         max_entries=max_entries,
         lmdb_map_size=lmdb_map_size,
+        flight_timeout=flight_timeout,
     )
 
 
@@ -126,7 +134,14 @@ def cacheable(
                     break
 
                 if fut is not None:
-                    return await fut
+                    timeout = _manager.config.get("flight_timeout", 60)
+                    try:
+                        # Use shield to avoid cancelling the leader's future on follower timeout
+                        return await asyncio.wait_for(
+                            asyncio.shield(fut), timeout=timeout
+                        )
+                    except asyncio.TimeoutError:
+                        raise RuntimeError("Thundering herd leader failed") from None
 
                 await asyncio.sleep(0)
 
@@ -137,11 +152,13 @@ def cacheable(
                     res = await fn(*args, **kwargs)
                     core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
-                leader_fut.set_result(res)
+                if not leader_fut.done():
+                    leader_fut.set_result(res)
                 return res
             except Exception as e:
                 core.finish_flight(key, True, None)
-                leader_fut.set_exception(e)
+                if not leader_fut.done():
+                    leader_fut.set_exception(e)
                 raise
 
         @functools.wraps(fn)

@@ -19,18 +19,19 @@ impl InMemoryStorage {
 
 impl Storage for InMemoryStorage {
     #[inline]
-    fn get(&self, key: &str) -> Option<Arc<CacheEntry>> {
-        let mut entry = self.map.get_mut(key)?;
+    fn get(&self, key: &str) -> super::StorageResult {
+        let mut entry = match self.map.get_mut(key) {
+            Some(e) => e,
+            None => return super::StorageResult::NotFound,
+        };
         let (val, expires_at, last_accessed) = entry.value_mut();
 
         if expires_at.is_some_and(|expires| now_secs() > expires) {
-            drop(entry);
-            self.map.remove(key);
-            return None;
+            return super::StorageResult::Expired;
         }
 
         *last_accessed = now_secs();
-        Some(Arc::clone(val))
+        super::StorageResult::Hit(Arc::clone(val))
     }
 
     #[inline]

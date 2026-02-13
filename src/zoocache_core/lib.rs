@@ -49,6 +49,7 @@ fn validate_tag(tag: &str) -> PyResult<()> {
 enum WorkerMsg {
     Touch(String, Option<u64>),
     Prune(u64),
+    Delete(String),
 }
 
 #[pyclass]
@@ -60,12 +61,14 @@ struct Core {
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
     tti_tx: Option<Sender<WorkerMsg>>,
+    flight_timeout: u64,
 }
 
 #[pymethods]
 impl Core {
     #[new]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -74,6 +77,7 @@ impl Core {
         read_extend_ttl: bool,
         max_entries: Option<usize>,
         lmdb_map_size: Option<usize>,
+        flight_timeout: Option<u64>,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
@@ -143,6 +147,9 @@ impl Core {
                         WorkerMsg::Prune(max_age) => {
                             trie_worker.prune(max_age);
                         }
+                        WorkerMsg::Delete(key) => {
+                            let _ = storage_worker.remove(&key);
+                        }
                     }
 
                     if (batch.len() >= 1000
@@ -171,6 +178,7 @@ impl Core {
             default_ttl,
             max_entries,
             tti_tx,
+            flight_timeout: flight_timeout.unwrap_or(60),
         })
     }
 
@@ -184,8 +192,8 @@ impl Core {
         if is_leader {
             return Ok((None, true));
         }
-
-        let status = py.detach(|| wait_for_flight(&flight));
+        let timeout = self.flight_timeout;
+        let status = py.detach(|| wait_for_flight(&flight, timeout));
 
         match status {
             FlightStatus::Done => {
@@ -244,11 +252,17 @@ impl Core {
 
     fn get(&self, py: Python, key: &str) -> PyResult<Option<Py<PyAny>>> {
         let storage = Arc::clone(&self.storage);
-        let entry = py.detach(|| storage.get(key));
+        let status = py.detach(|| storage.get(key));
 
-        let entry = match entry {
-            Some(e) => e,
-            None => return Ok(None),
+        let entry = match status {
+            storage::StorageResult::Hit(e) => e,
+            storage::StorageResult::Expired => {
+                if let Some(tx) = &self.tti_tx {
+                    let _ = tx.send(WorkerMsg::Delete(key.to_string()));
+                }
+                return Ok(None);
+            }
+            storage::StorageResult::NotFound => return Ok(None),
         };
 
         let global_version = self.trie.get_global_version();

@@ -1,6 +1,7 @@
 from hashlib import sha256
 from typing import Optional
 from django.apps import apps
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models, transaction
 from django.db.models import prefetch_related_objects
 from django.db.models.signals import post_save, post_delete, m2m_changed
@@ -14,14 +15,20 @@ def _model_label(model):
     return f"{model._meta.app_label}.{model._meta.model_name}"
 
 
+_json_encoder = DjangoJSONEncoder()
+
+
 def _model_to_raw(instance):
     data = {}
     for field in instance._meta.concrete_fields:
         value = field.value_from_object(instance)
-        if isinstance(value, (int, float, str, bool, type(None), list, dict)):
-            data[field.attname] = value
-        else:
-            data[field.attname] = str(value)
+        # Use Django's JSON encoder logic for serializing non-primitive types
+        try:
+            prepared_value = _json_encoder.default(value)
+        except TypeError:
+            prepared_value = value
+        data[field.attname] = prepared_value
+
     if hasattr(instance._state, "fields_cache"):
         related_data = {}
         for field_name, related_inst in instance._state.fields_cache.items():
@@ -37,7 +44,14 @@ def _model_to_raw(instance):
 
 def _raw_to_instance(model, data, db="default"):
     related_data = data.pop(INTERNAL_CACHE_KEY_RELATED, None)
-    instance = model(**data)
+
+    # Convert primitive values back to Python objects using field.to_python
+    init_kwargs = {}
+    for field in model._meta.concrete_fields:
+        if field.attname in data:
+            init_kwargs[field.attname] = field.to_python(data[field.attname])
+
+    instance = model(**init_kwargs)
 
     if related_data:
         for field_name, rel_info in related_data.items():

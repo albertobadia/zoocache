@@ -100,8 +100,11 @@ impl LmdbStorage {
 }
 
 impl Storage for LmdbStorage {
-    fn get(&self, key: &str) -> Option<Arc<CacheEntry>> {
-        let txn = self.env.begin_ro_txn().ok()?;
+    fn get(&self, key: &str) -> super::StorageResult {
+        let txn = match self.env.begin_ro_txn() {
+            Ok(t) => t,
+            Err(_) => return super::StorageResult::NotFound,
+        };
 
         if txn
             .get(self.db_ttls, &key)
@@ -110,13 +113,21 @@ impl Storage for LmdbStorage {
             .filter(|&ts| ts != 0 && now_secs() > ts)
             .is_some()
         {
-            drop(txn);
-            let _ = self.remove(key);
-            return None;
+            return super::StorageResult::Expired;
         }
 
-        let data = txn.get(self.db_main, &key).ok()?;
-        Python::attach(|py| CacheEntry::deserialize(py, data).ok().map(Arc::new))
+        let data = match txn.get(self.db_main, &key) {
+            Ok(d) => d,
+            Err(_) => return super::StorageResult::NotFound,
+        };
+
+        Python::attach(|py| {
+            CacheEntry::deserialize(py, data)
+                .ok()
+                .map(Arc::new)
+                .map(super::StorageResult::Hit)
+                .unwrap_or(super::StorageResult::NotFound)
+        })
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
