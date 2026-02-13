@@ -22,21 +22,19 @@ class CacheManager:
         if self.is_configured() and any(
             self.config.get(k) != v for k, v in kwargs.items()
         ):
-            # Only raise if trying to change an existing configuration
             raise RuntimeError("zoocache already initialized with different settings")
         self.config = kwargs
 
     def get_core(self) -> Core:
         if self.core is None:
-            core_args = {
-                k: v
-                for k, v in self.config.items()
-                if k not in ("prune_after", "flight_timeout", "tti_flush_secs")
-            }
+            exclude = ("prune_after", "flight_timeout", "tti_flush_secs")
+            core_args = {k: v for k, v in self.config.items() if k not in exclude}
+
             if timeout := self.config.get("flight_timeout"):
                 core_args["flight_timeout"] = timeout
             if tti_flush := self.config.get("tti_flush_secs"):
                 core_args["tti_flush_secs"] = tti_flush
+
             self.core = Core(**core_args)
         return self.core
 
@@ -140,7 +138,6 @@ def cacheable(
                 if fut is not None:
                     timeout = _manager.config.get("flight_timeout", 60)
                     try:
-                        # Use shield to avoid cancelling the leader's future on follower timeout
                         return await asyncio.wait_for(
                             asyncio.shield(fut), timeout=timeout
                         )

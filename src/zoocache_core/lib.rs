@@ -133,7 +133,6 @@ impl Core {
 
                 while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
                     if e == mpsc::RecvTimeoutError::Timeout {
-                        // Empty message to trigger periodic flush
                         Ok(WorkerMsg::Touch(String::new(), None))
                     } else {
                         Err(e)

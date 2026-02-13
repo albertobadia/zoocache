@@ -3,7 +3,7 @@ from typing import Optional
 from django.apps import apps
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models, transaction
-from django.db.models import prefetch_related_objects
+from django.db.models.query import ModelIterable, prefetch_related_objects
 from django.db.models.signals import post_save, post_delete, m2m_changed
 
 from zoocache.core import _manager
@@ -36,7 +36,6 @@ def _model_to_raw(instance, visited=None):
     data = {}
     for field in instance._meta.concrete_fields:
         value = field.value_from_object(instance)
-        # Use Django's JSON encoder logic for serializing non-primitive types
         try:
             prepared_value = _json_encoder.default(value)
         except TypeError:
@@ -69,17 +68,16 @@ def _raw_to_instance(model, data, db="default"):
     related_data = data.pop(INTERNAL_CACHE_KEY_RELATED, None)
 
     # Convert primitive values back to Python objects using field.to_python
-    init_kwargs = {}
-    for field in model._meta.concrete_fields:
-        if field.attname in data:
-            init_kwargs[field.attname] = field.to_python(data[field.attname])
+    init_kwargs = {
+        field.attname: field.to_python(data[field.attname])
+        for field in model._meta.concrete_fields
+        if field.attname in data
+    }
 
     instance = model(**init_kwargs)
 
     if related_data:
-        # Initialize _state.fields_cache if it doesn't exist
-        if not hasattr(instance._state, "fields_cache"):
-            instance._state.fields_cache = {}
+        instance._state.fields_cache = getattr(instance._state, "fields_cache", {})
         for field_name, rel_info in related_data.items():
             rel_model = apps.get_model(rel_info["model_label"])
             data_val = rel_info["data"]
@@ -164,8 +162,6 @@ class ZooCacheQuerySet(models.QuerySet):
 
         key = self._get_cache_key()
         cached = self._core.get(key)
-
-        from django.db.models.query import ModelIterable
 
         is_model_iter = self._iterable_class is ModelIterable
 
