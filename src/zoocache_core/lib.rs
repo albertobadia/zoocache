@@ -62,13 +62,15 @@ struct Core {
     max_entries: Option<usize>,
     tti_tx: Option<Sender<WorkerMsg>>,
     flight_timeout: u64,
+    #[allow(dead_code)]
+    tti_flush_secs: u64,
 }
 
 #[pymethods]
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60))]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -78,6 +80,7 @@ impl Core {
         max_entries: Option<usize>,
         lmdb_map_size: Option<usize>,
         flight_timeout: Option<u64>,
+        tti_flush_secs: Option<u64>,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
@@ -113,6 +116,8 @@ impl Core {
         };
 
         let mut tti_tx = None;
+        let tti_flush_secs = tti_flush_secs.unwrap_or(30);
+
         if read_extend_ttl {
             let (tx, rx) = mpsc::channel::<WorkerMsg>();
             let storage_worker = Arc::clone(&storage);
@@ -122,6 +127,7 @@ impl Core {
                 let mut last_touches = HashMap::<String, Instant>::new();
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
+                let flush_duration = Duration::from_secs(tti_flush_secs);
 
                 while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
                     if e == mpsc::RecvTimeoutError::Timeout {
@@ -152,8 +158,7 @@ impl Core {
                         }
                     }
 
-                    if (batch.len() >= 1000
-                        || now.duration_since(last_flush) > Duration::from_secs(30))
+                    if (batch.len() >= 1000 || now.duration_since(last_flush) > flush_duration)
                         && !batch.is_empty()
                     {
                         let _ = storage_worker.touch_batch(batch.drain().collect());
@@ -179,6 +184,7 @@ impl Core {
             max_entries,
             tti_tx,
             flight_timeout: flight_timeout.unwrap_or(60),
+            tti_flush_secs,
         })
     }
 

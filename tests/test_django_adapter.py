@@ -81,6 +81,8 @@ class Article(models.Model):
 
     class Meta:
         app_label = "contenttypes"
+
+
 class FidelityModel(models.Model):
     uuid_val = models.UUIDField(default=uuid.uuid4)
     decimal_val = models.DecimalField(max_digits=10, decimal_places=2)
@@ -638,6 +640,7 @@ class TestSelectRelated:
             assert result.title == "Wonderland"
             assert result.author.name == "Alice"
             assert len(ctx) == 0
+
 
 class TestDjangoFidelity:
     def test_complex_types_roundtrip(self):

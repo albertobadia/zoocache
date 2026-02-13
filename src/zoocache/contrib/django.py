@@ -54,6 +54,9 @@ def _raw_to_instance(model, data, db="default"):
     instance = model(**init_kwargs)
 
     if related_data:
+        # Initialize _state.fields_cache if it doesn't exist
+        if not hasattr(instance._state, "fields_cache"):
+            instance._state.fields_cache = {}
         for field_name, rel_info in related_data.items():
             rel_model = apps.get_model(rel_info["model_label"])
             rel_instance = _raw_to_instance(rel_model, rel_info["data"], db=db)

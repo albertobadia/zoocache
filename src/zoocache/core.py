@@ -31,10 +31,12 @@ class CacheManager:
             core_args = {
                 k: v
                 for k, v in self.config.items()
-                if k not in ("prune_after", "flight_timeout")
+                if k not in ("prune_after", "flight_timeout", "tti_flush_secs")
             }
             if timeout := self.config.get("flight_timeout"):
                 core_args["flight_timeout"] = timeout
+            if tti_flush := self.config.get("tti_flush_secs"):
+                core_args["tti_flush_secs"] = tti_flush
             self.core = Core(**core_args)
         return self.core
 
@@ -65,6 +67,7 @@ def configure(
     max_entries: Optional[int] = None,
     lmdb_map_size: Optional[int] = None,
     flight_timeout: int = 60,
+    tti_flush_secs: int = 30,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -76,6 +79,7 @@ def configure(
         max_entries=max_entries,
         lmdb_map_size=lmdb_map_size,
         flight_timeout=flight_timeout,
+        tti_flush_secs=tti_flush_secs,
     )
 
 

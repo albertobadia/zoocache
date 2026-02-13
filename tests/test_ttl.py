@@ -86,3 +86,17 @@ def test_all_storages_ttl(storage_url):
     time.sleep(1.5)
     # Should be expired
     assert func(1) == 1
+
+
+def test_tti_flush_secs_initialization():
+    # Verify that the parameter is accepted and doesn't crash
+    reset()
+    try:
+        configure(tti_flush_secs=1)
+        # Access core to trigger initialization
+        from zoocache.core import _manager
+
+        core = _manager.get_core()
+        assert core.version() is not None
+    finally:
+        reset()

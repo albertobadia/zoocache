@@ -216,9 +216,11 @@ def test_sync_stress_race_condition():
 
     assert calls["count"] == 1
 
+
 @pytest.mark.asyncio
 async def test_flight_timeout_configurable_async():
     from zoocache import reset, configure
+
     # Ensure fresh state
     reset()
     # Configure with a very short timeout (1 second)
@@ -249,6 +251,7 @@ async def test_flight_timeout_configurable_async():
 
 def test_flight_timeout_configurable_sync():
     from zoocache import reset, configure
+
     # Ensure fresh state
     reset()
     # Configure with a very short timeout (1 second)
@@ -265,7 +268,7 @@ def test_flight_timeout_configurable_sync():
     def call_slow():
         try:
             cached_slow()
-        except:
+        except Exception:
             pass
 
     # First call will be the leader
