@@ -127,7 +127,9 @@ impl Core {
                 let mut last_touches = HashMap::<String, Instant>::new();
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
+                let mut last_auto_prune = Instant::now();
                 let flush_duration = Duration::from_secs(tti_flush_secs);
+                let prune_interval = Duration::from_secs(3600); // 1 hour
 
                 while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
                     if e == mpsc::RecvTimeoutError::Timeout {
@@ -163,6 +165,11 @@ impl Core {
                     {
                         let _ = storage_worker.touch_batch(batch.drain().collect());
                         last_flush = now;
+                    }
+
+                    if now.duration_since(last_auto_prune) > prune_interval {
+                        trie_worker.prune(3600);
+                        last_auto_prune = now;
                     }
 
                     if last_touches.len() > 10000 {
