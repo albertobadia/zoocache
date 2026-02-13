@@ -14,6 +14,7 @@ class CacheManager:
         self.core: Optional[Core] = None
         self.config: Dict[str, Any] = {}
         self._op_count: int = 0
+        self._flight_signals: Dict[str, asyncio.Event] = {}
 
     def is_configured(self) -> bool:
         return self.core is not None or bool(self.config)
@@ -50,6 +51,7 @@ class CacheManager:
         self.core = None
         self.config = {}
         self._op_count = 0
+        self._flight_signals.clear()
 
 
 _manager = CacheManager()
@@ -144,10 +146,16 @@ def cacheable(
                     except asyncio.TimeoutError:
                         raise RuntimeError("Thundering herd leader failed") from None
 
-                await asyncio.sleep(0)
+                if key not in _manager._flight_signals:
+                    _manager._flight_signals[key] = asyncio.Event()
+                await _manager._flight_signals[key].wait()
 
-            leader_fut = asyncio.get_running_loop().create_future()
-            core.register_flight_future(key, leader_fut)
+            try:
+                leader_fut = asyncio.get_running_loop().create_future()
+                core.register_flight_future(key, leader_fut)
+            finally:
+                if sig := _manager._flight_signals.pop(key, None):
+                    sig.set()
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
