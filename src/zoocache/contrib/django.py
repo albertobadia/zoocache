@@ -135,19 +135,30 @@ class ZooCacheQuerySet(models.QuerySet):
         key = self._get_cache_key()
         cached = self._core.get(key)
 
+        from django.db.models.query import ModelIterable
+
+        is_model_iter = self._iterable_class is ModelIterable
+
         if cached is not None:
-            self._result_cache = [
-                _raw_to_instance(self.model, row, db=self.db) for row in cached
-            ]
-            if self._prefetch_related_lookups:
-                prefetch_related_objects(
-                    self._result_cache, *self._prefetch_related_lookups
-                )
+            if is_model_iter:
+                self._result_cache = [
+                    _raw_to_instance(self.model, row, db=self.db) for row in cached
+                ]
+                if self._prefetch_related_lookups:
+                    prefetch_related_objects(
+                        self._result_cache, *self._prefetch_related_lookups
+                    )
+            else:
+                self._result_cache = cached
             return
 
         super()._fetch_all()
 
-        raw_rows = [_model_to_raw(obj) for obj in self._result_cache]
+        if is_model_iter:
+            raw_rows = [_model_to_raw(obj) for obj in self._result_cache]
+        else:
+            raw_rows = list(self._result_cache)
+
         deps = _get_query_deps(self)
         self._core.set(key, raw_rows, deps, ttl=self._zoo_ttl)
 
