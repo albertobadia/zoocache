@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::utils::{to_conn_err, to_runtime_err};
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
+use std::num::NonZeroUsize;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -124,7 +125,8 @@ impl Core {
             let trie_worker = trie.clone();
 
             thread::spawn(move || {
-                let mut last_touches = HashMap::<String, Instant>::new();
+                let mut last_touches =
+                    lru::LruCache::<String, Instant>::new(NonZeroUsize::new(10000).unwrap());
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
                 let mut last_auto_prune = Instant::now();
@@ -148,7 +150,7 @@ impl Core {
                                     continue;
                                 }
                                 batch.insert(key.clone(), ttl);
-                                last_touches.insert(key, now);
+                                last_touches.put(key, now);
                             }
                         }
                         WorkerMsg::Prune(max_age) => {
@@ -169,12 +171,6 @@ impl Core {
                     if now.duration_since(last_auto_prune) > prune_interval {
                         trie_worker.prune(3600);
                         last_auto_prune = now;
-                    }
-
-                    if last_touches.len() > 10000 {
-                        last_touches.retain(|_, &mut instant| {
-                            now.duration_since(instant) < Duration::from_secs(300)
-                        });
                     }
                 }
             });
