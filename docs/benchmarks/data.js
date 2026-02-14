@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771049421384,
+  "lastUpdate": 1771049796553,
   "repoUrl": "https://github.com/albertobadia/zoocache",
   "entries": {
     "Python Benchmark": [
@@ -3044,6 +3044,222 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00000866483407156009",
             "extra": "mean: 343.86949794984827 usec\nrounds: 2683"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "albertobadia",
+            "username": "albertobadia"
+          },
+          "committer": {
+            "name": "albertobadia",
+            "username": "albertobadia"
+          },
+          "id": "2364a7f0480ceb2c3b582beb91223aa802a55686",
+          "message": "NEXT RELEASE",
+          "timestamp": "2026-02-14T00:31:47Z",
+          "url": "https://github.com/albertobadia/zoocache/pull/7/commits/2364a7f0480ceb2c3b582beb91223aa802a55686"
+        },
+        "date": 1771049795943,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_core.py::test_hit_latency",
+            "value": 425840.06516601605,
+            "unit": "iter/sec",
+            "range": "stddev: 5.047279697482591e-7",
+            "extra": "mean: 2.3482994715636836 usec\nrounds: 12876"
+          },
+          {
+            "name": "benchmarks/test_core.py::test_thundering_herd",
+            "value": 9.76710006102594,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011008777219674107",
+            "extra": "mean: 102.38453519999666 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_core.py::test_invalidation_efficiency_prefix",
+            "value": 83181.52706903558,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008590647716764746",
+            "extra": "mean: 12.021899996739194 usec\nrounds: 100"
+          },
+          {
+            "name": "benchmarks/test_django.py::test_django_manager_baseline",
+            "value": 166.8788212259954,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000058875635345089685",
+            "extra": "mean: 5.992372145568738 msec\nrounds: 158"
+          },
+          {
+            "name": "benchmarks/test_django.py::test_django_manager_count_baseline",
+            "value": 180.23858270781048,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005113576653206656",
+            "extra": "mean: 5.548201639052646 msec\nrounds: 169"
+          },
+          {
+            "name": "benchmarks/test_django.py::test_django_manager_join_baseline",
+            "value": 179.0350225896295,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000049254268142161354",
+            "extra": "mean: 5.585499337144353 msec\nrounds: 175"
+          },
+          {
+            "name": "benchmarks/test_django.py::test_django_cached_hit",
+            "value": 1017.9478680376194,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005634489301073803",
+            "extra": "mean: 982.3685783907391 usec\nrounds: 944"
+          },
+          {
+            "name": "benchmarks/test_django.py::test_django_cached_miss",
+            "value": 144.29626100238156,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010031515037725004",
+            "extra": "mean: 6.930186500005675 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_django.py::test_django_cached_count_hit",
+            "value": 6244.635319836413,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009925740103764262",
+            "extra": "mean: 160.13745379549184 usec\nrounds: 4242"
+          },
+          {
+            "name": "benchmarks/test_django.py::test_django_complex_join_hit",
+            "value": 5178.190500306035,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013628466113001826",
+            "extra": "mean: 193.11765373268895 usec\nrounds: 4072"
+          },
+          {
+            "name": "benchmarks/test_lazy.py::test_lazy_update_lifecycle",
+            "value": 171.79603455666418,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003600227208873887",
+            "extra": "mean: 5.820856125000755 msec\nrounds: 48"
+          },
+          {
+            "name": "benchmarks/test_lazy.py::test_lazy_update_recovery",
+            "value": 111.63429391212665,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005935670569283854",
+            "extra": "mean: 8.95782080000572 msec\nrounds: 50"
+          },
+          {
+            "name": "benchmarks/test_lazy.py::test_lazy_update_baseline",
+            "value": 463780.0262271589,
+            "unit": "iter/sec",
+            "range": "stddev: 4.591488968483724e-7",
+            "extra": "mean: 2.15619462557493 usec\nrounds: 108850"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_massive_dependencies_get[10]",
+            "value": 462756.54854948306,
+            "unit": "iter/sec",
+            "range": "stddev: 4.804946380358321e-7",
+            "extra": "mean: 2.1609634766585457 usec\nrounds: 172712"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_massive_dependencies_get[100]",
+            "value": 449417.27106536465,
+            "unit": "iter/sec",
+            "range": "stddev: 9.005320828745742e-7",
+            "extra": "mean: 2.2251036272581453 usec\nrounds: 162023"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_massive_dependencies_get[1000]",
+            "value": 459862.6086173851,
+            "unit": "iter/sec",
+            "range": "stddev: 4.685903339819958e-7",
+            "extra": "mean: 2.1745625351158306 usec\nrounds: 163908"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_massive_dependencies_get[5000]",
+            "value": 443620.99951624445,
+            "unit": "iter/sec",
+            "range": "stddev: 6.087266975099505e-7",
+            "extra": "mean: 2.2541764278302208 usec\nrounds: 145731"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_massive_dependencies_get[10000]",
+            "value": 462602.7496465201,
+            "unit": "iter/sec",
+            "range": "stddev: 4.3963785016448365e-7",
+            "extra": "mean: 2.1616819198850656 usec\nrounds: 135796"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_high_concurrency_throughput[50]",
+            "value": 50.04660590175209,
+            "unit": "iter/sec",
+            "range": "stddev: 0.004080043412274038",
+            "extra": "mean: 19.98137499999757 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_high_concurrency_throughput[100]",
+            "value": 55.661945323938056,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001836491829306188",
+            "extra": "mean: 17.965595600014694 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_high_concurrency_throughput[200]",
+            "value": 34.44648457192621,
+            "unit": "iter/sec",
+            "range": "stddev: 0.010989624449262853",
+            "extra": "mean: 29.03053860001137 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_deep_hierarchy_validation",
+            "value": 471872.25901494134,
+            "unit": "iter/sec",
+            "range": "stddev: 4.649243017820421e-7",
+            "extra": "mean: 2.1192176079338796 usec\nrounds: 174217"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_deep_hierarchy_invalidation_root",
+            "value": 987908.0060952246,
+            "unit": "iter/sec",
+            "range": "stddev: 2.9269293232977825e-7",
+            "extra": "mean: 1.0122399999090703 usec\nrounds: 100"
+          },
+          {
+            "name": "benchmarks/test_load.py::test_deep_hierarchy_invalidation_leaf",
+            "value": 196419.6625433808,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002021984833973677",
+            "extra": "mean: 5.091139996125094 usec\nrounds: 100"
+          },
+          {
+            "name": "benchmarks/test_storage.py::test_storage_memory_baseline",
+            "value": 4653.197965647861,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002558542382514763",
+            "extra": "mean: 214.90596518404752 usec\nrounds: 4452"
+          },
+          {
+            "name": "benchmarks/test_storage.py::test_storage_memory_tti",
+            "value": 4569.052824542264,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000022105927595405332",
+            "extra": "mean: 218.86374231188321 usec\nrounds: 4195"
+          },
+          {
+            "name": "benchmarks/test_storage.py::test_storage_lmdb_baseline",
+            "value": 2996.7357807800918,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008753207920603034",
+            "extra": "mean: 333.6964194219639 usec\nrounds: 2873"
+          },
+          {
+            "name": "benchmarks/test_storage.py::test_storage_lmdb_tti",
+            "value": 2877.7979085260304,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009549565065553593",
+            "extra": "mean: 347.4879167287277 usec\nrounds: 2702"
           }
         ]
       }
