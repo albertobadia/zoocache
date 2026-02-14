@@ -372,14 +372,14 @@ class TestManagerConfig:
         assert qs._zoo_prefix == "custom"
 
         key = qs._get_cache_key()
-        assert key.startswith("custom:django:")
+        assert key.startswith("custom:django.model:")
 
     def test_no_prefix_default(self):
         Author.objects.create(name="Alice", age=30)
 
         qs = Author.cached.all()
         key = qs._get_cache_key()
-        assert key.startswith("django:contenttypes.author:")
+        assert key.startswith("django.model:contenttypes.author:")
 
 
 class TestJoinDependencies:

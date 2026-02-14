@@ -199,3 +199,13 @@ def cacheable(
 
 def reset() -> None:
     _manager.reset()
+
+
+def get_cache(key: str) -> Any:
+    return _manager.get_core().get(key)
+
+
+def set_cache(
+    key: str, value: Any, deps: Iterable[str] = (), ttl: Optional[int] = None
+) -> None:
+    _manager.get_core().set(key, value, list(deps), ttl=ttl)

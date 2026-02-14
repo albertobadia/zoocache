@@ -7,15 +7,49 @@ from django.db.models.query import ModelIterable, prefetch_related_objects
 from django.db.models.signals import post_save, post_delete, m2m_changed
 
 from zoocache.core import _manager
+from .util import model_tag, instance_tag
 
 INTERNAL_CACHE_KEY_RELATED = "_zoo_related"
-
-
-def _model_label(model):
-    return f"{model._meta.app_label}.{model._meta.model_name}"
-
-
 _json_encoder = DjangoJSONEncoder()
+
+
+def _serialize_instance(obj, visited):
+    if not hasattr(obj, "_meta"):
+        return None
+
+    obj_id = (obj.__class__, obj.pk) if obj.pk else id(obj)
+    if obj_id in visited:
+        return None
+    visited.add(obj_id)
+
+    data = {}
+    encoder = _json_encoder.default
+    for field in obj._meta.concrete_fields:
+        val = field.value_from_object(obj)
+        try:
+            data[field.attname] = encoder(val)
+        except TypeError:
+            data[field.attname] = val
+
+    if relations := getattr(obj._state, "fields_cache", None):
+        rel_payload = {}
+        for name, entry in relations.items():
+            if not entry:
+                continue
+
+            serialized = _model_to_raw(entry, visited=visited)
+            if serialized:
+                target = entry[0] if isinstance(entry, (list, tuple)) else entry
+                rel_payload[name] = {
+                    "label": model_tag(target.__class__),
+                    "data": serialized,
+                    "is_list": isinstance(entry, (list, tuple)),
+                }
+
+        if rel_payload:
+            data[INTERNAL_CACHE_KEY_RELATED] = rel_payload
+
+    return data
 
 
 def _model_to_raw(instance, visited=None):
@@ -23,79 +57,47 @@ def _model_to_raw(instance, visited=None):
         visited = set()
 
     if isinstance(instance, (list, tuple)):
-        return [_model_to_raw(i, visited=visited) for i in instance]
-
-    if not hasattr(instance, "_meta"):
-        return None
-
-    obj_id = (instance.__class__, instance.pk) if instance.pk else id(instance)
-    if obj_id in visited:
-        return None
-    visited.add(obj_id)
-
-    data = {}
-    for field in instance._meta.concrete_fields:
-        value = field.value_from_object(instance)
-        try:
-            prepared_value = _json_encoder.default(value)
-        except TypeError:
-            prepared_value = value
-        data[field.attname] = prepared_value
-
-    if hasattr(instance._state, "fields_cache"):
-        related_data = {}
-        for field_name, related_inst in instance._state.fields_cache.items():
-            if related_inst:
-                rel_data = _model_to_raw(related_inst, visited=visited)
-                if rel_data:
-                    if isinstance(related_inst, (list, tuple)):
-                        if not related_inst:
-                            continue
-                        label = _model_label(related_inst[0].__class__)
-                    else:
-                        label = _model_label(related_inst.__class__)
-
-                    related_data[field_name] = {
-                        "model_label": label,
-                        "data": rel_data,
-                    }
-        if related_data:
-            data[INTERNAL_CACHE_KEY_RELATED] = related_data
-    return data
+        return [_serialize_instance(i, visited) for i in instance]
+    return _serialize_instance(instance, visited)
 
 
 def _raw_to_instance(model, data, db="default"):
-    related_data = data.pop(INTERNAL_CACHE_KEY_RELATED, None)
+    if not data:
+        return None
 
-    # Convert primitive values back to Python objects using field.to_python
+    rel_data = data.pop(INTERNAL_CACHE_KEY_RELATED, None)
+
+    concrete_fields = {f.attname: f for f in model._meta.concrete_fields}
     init_kwargs = {
-        field.attname: field.to_python(data[field.attname])
-        for field in model._meta.concrete_fields
-        if field.attname in data
+        name: concrete_fields[name].to_python(val)
+        for name, val in data.items()
+        if name in concrete_fields
     }
 
     instance = model(**init_kwargs)
-
-    if related_data:
-        instance._state.fields_cache = getattr(instance._state, "fields_cache", {})
-        for field_name, rel_info in related_data.items():
-            rel_model = apps.get_model(rel_info["model_label"])
-            data_val = rel_info["data"]
-            if isinstance(data_val, list):
-                rel_instance = [_raw_to_instance(rel_model, d, db=db) for d in data_val]
-            else:
-                rel_instance = _raw_to_instance(rel_model, data_val, db=db)
-            instance._state.fields_cache[field_name] = rel_instance
-
     instance._state.adding = False
     instance._state.db = db
+
+    if rel_data:
+        instance._state.fields_cache = {}
+        for name, info in rel_data.items():
+            rel_model = apps.get_model(info["label"])
+            raw = info["data"]
+
+            if info.get("is_list"):
+                val = [_raw_to_instance(rel_model, d, db=db) for d in raw]
+            else:
+                val = _raw_to_instance(rel_model, raw, db=db)
+
+            instance._state.fields_cache[name] = val
+
     return instance
 
 
 def _make_cache_key(prefix, model, query_str):
-    label = _model_label(model)
+    label = model_tag(model)
     digest = sha256(query_str.encode()).hexdigest()[:16]
-    base = f"{prefix}:django:{label}" if prefix else f"django:{label}"
+    base = f"{prefix}:django.model:{label}" if prefix else f"django.model:{label}"
     return f"{base}:{digest}"
 
 
@@ -126,13 +128,12 @@ def _build_table_map(model):
 def _get_query_deps(queryset):
     table_map = _build_table_map(queryset.model)
     query_tables = {info.table_name for info in queryset.query.alias_map.values()}
-    labels = {_model_label(table_map[t]) for t in query_tables if t in table_map}
-    labels.add(_model_label(queryset.model))
+    labels = {model_tag(table_map[t]) for t in query_tables if t in table_map}
+    labels.add(model_tag(queryset.model))
     return list(labels)
 
 
 class ZooCacheQuerySet(models.QuerySet):
-    """QuerySet that transparently caches results and validates dependencies."""
 
     _zoo_ttl: Optional[int] = None
     _zoo_prefix: Optional[str] = None
@@ -153,8 +154,7 @@ class ZooCacheQuerySet(models.QuerySet):
         return f"{sql}|{params}"
 
     def _get_cache_key(self):
-        fingerprint = self._get_query_fingerprint()
-        return _make_cache_key(self._zoo_prefix, self.model, fingerprint)
+        return _make_cache_key(self._zoo_prefix, self.model, self._get_query_fingerprint())
 
     def _fetch_all(self):
         if self._result_cache is not None:
@@ -185,8 +185,7 @@ class ZooCacheQuerySet(models.QuerySet):
         else:
             raw_rows = list(self._result_cache)
 
-        deps = _get_query_deps(self)
-        self._core.set(key, raw_rows, deps, ttl=self._zoo_ttl)
+        self._core.set(key, raw_rows, _get_query_deps(self), ttl=self._zoo_ttl)
 
     def count(self):
         fingerprint = f"count:{self._get_query_fingerprint()}"
@@ -216,16 +215,16 @@ class ZooCacheQuerySet(models.QuerySet):
 
 
 def _invalidate_model(sender, **kwargs):
-    label = _model_label(sender)
+    label = model_tag(sender)
     transaction.on_commit(lambda: _manager.get_core().invalidate(label))
 
 
 def _invalidate_m2m(instance, **kwargs):
     def _do_invalidate():
         core = _manager.get_core()
-        core.invalidate(_model_label(instance.__class__))
+        core.invalidate(model_tag(instance.__class__))
         if model_val := kwargs.get("model"):
-            core.invalidate(_model_label(model_val))
+            core.invalidate(model_tag(model_val))
 
     transaction.on_commit(_do_invalidate)
 
@@ -242,7 +241,6 @@ def _auto_configure():
 
 
 class ZooCacheManager(models.Manager):
-    """Custom manager that enables transparent caching for Django models."""
 
     def __init__(self, *, ttl=None, prefix=None, ensure_objects_manager=True):
         super().__init__()

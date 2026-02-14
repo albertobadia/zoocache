@@ -50,6 +50,7 @@ nav:
   - Django Integration:
       - Overview: django.md
       - User Guide: django_user_guide.md
+      - Django Serializers Auto: django_serializers.md
   - Architecture: architecture.md
   - Serialization: serialization.md
   - Reliability: reliability.md

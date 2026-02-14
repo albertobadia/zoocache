@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
-    <img alt="ZooCache Logo" src="docs/assets/logo-light.svg" width="600">
-  </picture>
+  <img alt="ZooCache Logo" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-light.svg" width="600">
 </p>
 
 <p align="center">
@@ -11,7 +7,7 @@
 </p>
 <div align="center" markdown="1">
 
-[**📖 Read the User Guide**](docs/user_guide.md)
+[**📖 Read the User Guide**](https://github.com/albertobadia/zoocache/blob/main/docs/user_guide.md)
 
 </div>
 <p align="center">
@@ -94,14 +90,15 @@ def get_product_page(product_id: int, store_id: int):
 
 Explore the deep dives into Zoocache's architecture and features:
 
-- [**Architecture Overview**](docs/architecture.md) - How the Rust core and Python wrapper interact.
-- [**Hierarchical Invalidation**](docs/invalidation.md) - Deep dive into the PrefixTrie and O(D) invalidation.
-- [**Serialization Pipeline**](docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
-- [**Concurrency & SingleFlight**](docs/concurrency.md) - Shielding your database from traffic spikes.
-- [**Distributed Consistency**](docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
-- [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
-- [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
-- [**Reliability & Edge Cases**](docs/reliability.md) - Fail-fast mechanisms and memory management.
+- [**Architecture Overview**](https://github.com/albertobadia/zoocache/blob/main/docs/architecture.md) - How the Rust core and Python wrapper interact.
+- [**Hierarchical Invalidation**](https://github.com/albertobadia/zoocache/blob/main/docs/invalidation.md) - Deep dive into the PrefixTrie and O(D) invalidation.
+- [**Serialization Pipeline**](https://github.com/albertobadia/zoocache/blob/main/docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
+- [**Concurrency & SingleFlight**](https://github.com/albertobadia/zoocache/blob/main/docs/concurrency.md) - Shielding your database from traffic spikes.
+- [**Distributed Consistency**](https://github.com/albertobadia/zoocache/blob/main/docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
+- [**Django Integration**](https://github.com/albertobadia/zoocache/blob/main/docs/django.md) - Using ZooCache with the Django ORM.
+- [**Django User Guide**](https://github.com/albertobadia/zoocache/blob/main/docs/django_user_guide.md) - Detailed guide for Django users.
+- [**Django Serializers Auto**](https://github.com/albertobadia/zoocache/blob/main/docs/django_serializers.md) - Automatic caching for Django REST Framework.
+- [**Reliability & Edge Cases**](https://github.com/albertobadia/zoocache/blob/main/docs/reliability.md) - Fail-fast mechanisms and memory management.
 
 ---
 
