@@ -184,9 +184,10 @@ class MyAppConfig(AppConfig):
 Django's `.update()`, `.bulk_create()`, and `.bulk_update()` do **not** trigger signals. Use manual invalidation if needed:
 
 ```python
-from zoocache.core import _manager
+from zoocache import invalidate
+
 # Invalidate all Product queries
-_manager.get_core().invalidate("myapp.Product")
+invalidate("django.model:myapp.product")
 ```
 
 ### Large Cache Size

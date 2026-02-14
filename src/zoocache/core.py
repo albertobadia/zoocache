@@ -14,6 +14,7 @@ class CacheManager:
         self.core: Optional[Core] = None
         self.config: Dict[str, Any] = {}
         self._op_count: int = 0
+        self._flight_signals: Dict[str, asyncio.Event] = {}
 
     def is_configured(self) -> bool:
         return self.core is not None or bool(self.config)
@@ -22,13 +23,19 @@ class CacheManager:
         if self.is_configured() and any(
             self.config.get(k) != v for k, v in kwargs.items()
         ):
-            # Only raise if trying to change an existing configuration
             raise RuntimeError("zoocache already initialized with different settings")
         self.config = kwargs
 
     def get_core(self) -> Core:
         if self.core is None:
-            core_args = {k: v for k, v in self.config.items() if k != "prune_after"}
+            exclude = ("prune_after", "flight_timeout", "tti_flush_secs")
+            core_args = {k: v for k, v in self.config.items() if k not in exclude}
+
+            if timeout := self.config.get("flight_timeout"):
+                core_args["flight_timeout"] = timeout
+            if tti_flush := self.config.get("tti_flush_secs"):
+                core_args["tti_flush_secs"] = tti_flush
+
             self.core = Core(**core_args)
         return self.core
 
@@ -44,6 +51,7 @@ class CacheManager:
         self.core = None
         self.config = {}
         self._op_count = 0
+        self._flight_signals.clear()
 
 
 _manager = CacheManager()
@@ -58,6 +66,8 @@ def configure(
     read_extend_ttl: bool = True,
     max_entries: Optional[int] = None,
     lmdb_map_size: Optional[int] = None,
+    flight_timeout: int = 60,
+    tti_flush_secs: int = 30,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -68,6 +78,8 @@ def configure(
         read_extend_ttl=read_extend_ttl,
         max_entries=max_entries,
         lmdb_map_size=lmdb_map_size,
+        flight_timeout=flight_timeout,
+        tti_flush_secs=tti_flush_secs,
     )
 
 
@@ -126,22 +138,36 @@ def cacheable(
                     break
 
                 if fut is not None:
-                    return await fut
+                    timeout = _manager.config.get("flight_timeout", 60)
+                    try:
+                        return await asyncio.wait_for(
+                            asyncio.shield(fut), timeout=timeout
+                        )
+                    except asyncio.TimeoutError:
+                        raise RuntimeError("Thundering herd leader failed") from None
 
-                await asyncio.sleep(0)
+                if key not in _manager._flight_signals:
+                    _manager._flight_signals[key] = asyncio.Event()
+                await _manager._flight_signals[key].wait()
 
-            leader_fut = asyncio.get_running_loop().create_future()
-            core.register_flight_future(key, leader_fut)
+            try:
+                leader_fut = asyncio.get_running_loop().create_future()
+                core.register_flight_future(key, leader_fut)
+            finally:
+                if sig := _manager._flight_signals.pop(key, None):
+                    sig.set()
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
                     core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
-                leader_fut.set_result(res)
+                if not leader_fut.done():
+                    leader_fut.set_result(res)
                 return res
             except Exception as e:
                 core.finish_flight(key, True, None)
-                leader_fut.set_exception(e)
+                if not leader_fut.done():
+                    leader_fut.set_exception(e)
                 raise
 
         @functools.wraps(fn)
@@ -173,3 +199,13 @@ def cacheable(
 
 def reset() -> None:
     _manager.reset()
+
+
+def get_cache(key: str) -> Any:
+    return _manager.get_core().get(key)
+
+
+def set_cache(
+    key: str, value: Any, deps: Iterable[str] = (), ttl: Optional[int] = None
+) -> None:
+    _manager.get_core().set(key, value, list(deps), ttl=ttl)

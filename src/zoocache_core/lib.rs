@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::utils::{to_conn_err, to_runtime_err};
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
+use std::num::NonZeroUsize;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -49,6 +50,7 @@ fn validate_tag(tag: &str) -> PyResult<()> {
 enum WorkerMsg {
     Touch(String, Option<u64>),
     Prune(u64),
+    Delete(String),
 }
 
 #[pyclass]
@@ -60,12 +62,16 @@ struct Core {
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
     tti_tx: Option<Sender<WorkerMsg>>,
+    flight_timeout: u64,
+    #[allow(dead_code)]
+    tti_flush_secs: u64,
 }
 
 #[pymethods]
 impl Core {
     #[new]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -74,6 +80,8 @@ impl Core {
         read_extend_ttl: bool,
         max_entries: Option<usize>,
         lmdb_map_size: Option<usize>,
+        flight_timeout: Option<u64>,
+        tti_flush_secs: Option<u64>,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
@@ -109,19 +117,24 @@ impl Core {
         };
 
         let mut tti_tx = None;
+        let tti_flush_secs = tti_flush_secs.unwrap_or(30);
+
         if read_extend_ttl {
             let (tx, rx) = mpsc::channel::<WorkerMsg>();
             let storage_worker = Arc::clone(&storage);
             let trie_worker = trie.clone();
 
             thread::spawn(move || {
-                let mut last_touches = HashMap::<String, Instant>::new();
+                let mut last_touches =
+                    lru::LruCache::<String, Instant>::new(NonZeroUsize::new(10000).unwrap());
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
+                let mut last_auto_prune = Instant::now();
+                let flush_duration = Duration::from_secs(tti_flush_secs);
+                let prune_interval = Duration::from_secs(3600); // 1 hour
 
                 while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
                     if e == mpsc::RecvTimeoutError::Timeout {
-                        // Empty message to trigger periodic flush
                         Ok(WorkerMsg::Touch(String::new(), None))
                     } else {
                         Err(e)
@@ -137,26 +150,27 @@ impl Core {
                                     continue;
                                 }
                                 batch.insert(key.clone(), ttl);
-                                last_touches.insert(key, now);
+                                last_touches.put(key, now);
                             }
                         }
                         WorkerMsg::Prune(max_age) => {
                             trie_worker.prune(max_age);
                         }
+                        WorkerMsg::Delete(key) => {
+                            let _ = storage_worker.remove(&key);
+                        }
                     }
 
-                    if (batch.len() >= 1000
-                        || now.duration_since(last_flush) > Duration::from_secs(30))
+                    if (batch.len() >= 1000 || now.duration_since(last_flush) > flush_duration)
                         && !batch.is_empty()
                     {
                         let _ = storage_worker.touch_batch(batch.drain().collect());
                         last_flush = now;
                     }
 
-                    if last_touches.len() > 10000 {
-                        last_touches.retain(|_, &mut instant| {
-                            now.duration_since(instant) < Duration::from_secs(300)
-                        });
+                    if now.duration_since(last_auto_prune) > prune_interval {
+                        trie_worker.prune(3600);
+                        last_auto_prune = now;
                     }
                 }
             });
@@ -171,6 +185,8 @@ impl Core {
             default_ttl,
             max_entries,
             tti_tx,
+            flight_timeout: flight_timeout.unwrap_or(60),
+            tti_flush_secs,
         })
     }
 
@@ -184,8 +200,8 @@ impl Core {
         if is_leader {
             return Ok((None, true));
         }
-
-        let status = py.detach(|| wait_for_flight(&flight));
+        let timeout = self.flight_timeout;
+        let status = py.detach(|| wait_for_flight(&flight, timeout));
 
         match status {
             FlightStatus::Done => {
@@ -244,11 +260,17 @@ impl Core {
 
     fn get(&self, py: Python, key: &str) -> PyResult<Option<Py<PyAny>>> {
         let storage = Arc::clone(&self.storage);
-        let entry = py.detach(|| storage.get(key));
+        let status = py.detach(|| storage.get(key));
 
-        let entry = match entry {
-            Some(e) => e,
-            None => return Ok(None),
+        let entry = match status {
+            storage::StorageResult::Hit(e) => e,
+            storage::StorageResult::Expired => {
+                if let Some(tx) = &self.tti_tx {
+                    let _ = tx.send(WorkerMsg::Delete(key.to_string()));
+                }
+                return Ok(None);
+            }
+            storage::StorageResult::NotFound => return Ok(None),
         };
 
         let global_version = self.trie.get_global_version();

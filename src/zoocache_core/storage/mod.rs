@@ -84,8 +84,14 @@ impl CacheEntry {
     }
 }
 
+pub(crate) enum StorageResult {
+    Hit(Arc<CacheEntry>),
+    Expired,
+    NotFound,
+}
+
 pub(crate) trait Storage: Send + Sync {
-    fn get(&self, key: &str) -> Option<Arc<CacheEntry>>;
+    fn get(&self, key: &str) -> StorageResult;
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
     fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
     fn remove(&self, key: &str) -> PyResult<()>;

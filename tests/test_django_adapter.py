@@ -1,4 +1,7 @@
 import django
+import uuid
+from decimal import Decimal
+from datetime import datetime, date, timezone
 from django.conf import settings
 
 settings.configure(
@@ -80,16 +83,57 @@ class Article(models.Model):
         app_label = "contenttypes"
 
 
+class FidelityModel(models.Model):
+    uuid_val = models.UUIDField(default=uuid.uuid4)
+    decimal_val = models.DecimalField(max_digits=10, decimal_places=2)
+    datetime_val = models.DateTimeField()
+    date_val = models.DateField()
+    json_val = models.JSONField(default=dict)
+
+    objects = models.Manager()
+    cached = ZooCacheManager()
+
+    class Meta:
+        app_label = "contenttypes"
+
+
+class ValuesModel(models.Model):
+    name = models.CharField(max_length=100)
+    age = models.IntegerField()
+
+    objects = models.Manager()
+    cached = ZooCacheManager()
+
+    class Meta:
+        app_label = "contenttypes"
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     zoocache.reset()
     zoocache.clear()
     with connection.schema_editor() as editor:
-        for model in [Author, Book, PrefixedItem, Tag, Article]:
+        for model in [
+            Author,
+            Book,
+            PrefixedItem,
+            Tag,
+            Article,
+            FidelityModel,
+            ValuesModel,
+        ]:
             editor.create_model(model)
     yield
     with connection.schema_editor() as editor:
-        for model in [Article, Tag, PrefixedItem, Book, Author]:
+        for model in [
+            Article,
+            Tag,
+            PrefixedItem,
+            Book,
+            Author,
+            FidelityModel,
+            ValuesModel,
+        ]:
             editor.delete_model(model)
     zoocache.reset()
 
@@ -328,14 +372,14 @@ class TestManagerConfig:
         assert qs._zoo_prefix == "custom"
 
         key = qs._get_cache_key()
-        assert key.startswith("custom:django:")
+        assert key.startswith("custom:django.model:")
 
     def test_no_prefix_default(self):
         Author.objects.create(name="Alice", age=30)
 
         qs = Author.cached.all()
         key = qs._get_cache_key()
-        assert key.startswith("django:contenttypes.author:")
+        assert key.startswith("django.model:contenttypes.author:")
 
 
 class TestJoinDependencies:
@@ -596,3 +640,90 @@ class TestSelectRelated:
             assert result.title == "Wonderland"
             assert result.author.name == "Alice"
             assert len(ctx) == 0
+
+
+class TestDjangoFidelity:
+    def test_complex_types_roundtrip(self):
+        dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        d = date(2023, 1, 1)
+        u = uuid.uuid4()
+        dec = Decimal("19.99")
+        js = {"a": 1, "b": [2, 3]}
+
+        obj = FidelityModel.objects.create(
+            uuid_val=u, decimal_val=dec, datetime_val=dt, date_val=d, json_val=js
+        )
+
+        # First access to populate cache
+        res1 = FidelityModel.cached.get(pk=obj.pk)
+        assert res1.uuid_val == u
+        assert res1.decimal_val == dec
+        assert res1.datetime_val == dt
+        assert res1.date_val == d
+        assert res1.json_val == js
+
+        # Simulate database change that wouldn't be seen if cache is used
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'UPDATE contenttypes_fidelitymodel SET decimal_val = "0.00" WHERE id = {obj.pk}'
+            )
+
+        # Second access from cache
+        res2 = FidelityModel.cached.get(pk=obj.pk)
+        assert res2.uuid_val == u
+        assert isinstance(res2.uuid_val, uuid.UUID)
+        assert res2.decimal_val == dec
+        assert isinstance(res2.decimal_val, Decimal)
+        assert res2.datetime_val == dt
+        assert isinstance(res2.datetime_val, datetime)
+        assert res2.date_val == d
+        assert isinstance(res2.date_val, date)
+        assert res2.json_val == js
+
+
+class TestValuesQueries:
+    def test_values_caching(self):
+        ValuesModel.objects.create(name="Alice", age=30)
+        ValuesModel.objects.create(name="Bob", age=25)
+
+        # This should return dicts, not model instances
+        res1 = list(ValuesModel.cached.values("name"))
+        assert len(res1) == 2
+        assert res1[0] == {"name": "Alice"}
+
+        # Second hit from cache
+        res2 = list(ValuesModel.cached.values("name"))
+        assert res2 == res1
+
+    def test_values_list_caching(self):
+        ValuesModel.objects.create(name="Alice", age=30)
+
+        # This should return tuples
+        res1 = list(ValuesModel.cached.values_list("name", flat=True))
+        assert res1 == ["Alice"]
+
+        # Second hit from cache
+        res2 = list(ValuesModel.cached.values_list("name", flat=True))
+        assert res2 == res1
+
+
+class TestDjangoRecursion:
+    def test_circular_reference(self):
+        # We can't easily trigger a circular reference with real DB data and standard Django,
+        # but we can simulate what happens if fields_cache is monkeypatched or has cycles.
+        author = Author(id=1, name="Alice")
+        book = Book(id=1, title="Wonderland", author=author)
+
+        # Manually create a cycle: Alice -> Wonderland -> Alice
+        author._state.fields_cache["books"] = [book]
+        # book is already linked to author via its own fields_cache (select_related style)
+        book._state.fields_cache["author"] = author
+
+        # This used to cause RecursionError, now should be safe
+        raw = _model_to_raw(author)
+        assert raw["id"] == 1
+        assert "books" in raw["_zoo_related"]
+
+        # Verify reconstruction doesn't crash
+        restored = _raw_to_instance(Author, raw)
+        assert restored.id == 1

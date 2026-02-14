@@ -1,5 +1,5 @@
 use crate::storage::{CacheEntry, Storage};
-use crate::utils::{now_secs, to_runtime_err};
+use crate::utils::{now_nanos, now_secs, to_runtime_err};
 use lmdb::{Cursor, Database, DatabaseFlags, Environment, Transaction, WriteFlags};
 use pyo3::prelude::*;
 use std::path::Path;
@@ -100,8 +100,11 @@ impl LmdbStorage {
 }
 
 impl Storage for LmdbStorage {
-    fn get(&self, key: &str) -> Option<Arc<CacheEntry>> {
-        let txn = self.env.begin_ro_txn().ok()?;
+    fn get(&self, key: &str) -> super::StorageResult {
+        let txn = match self.env.begin_ro_txn() {
+            Ok(t) => t,
+            Err(_) => return super::StorageResult::NotFound,
+        };
 
         if txn
             .get(self.db_ttls, &key)
@@ -110,13 +113,21 @@ impl Storage for LmdbStorage {
             .filter(|&ts| ts != 0 && now_secs() > ts)
             .is_some()
         {
-            drop(txn);
-            let _ = self.remove(key);
-            return None;
+            return super::StorageResult::Expired;
         }
 
-        let data = txn.get(self.db_main, &key).ok()?;
-        Python::attach(|py| CacheEntry::deserialize(py, data).ok().map(Arc::new))
+        let data = match txn.get(self.db_main, &key) {
+            Ok(d) => d,
+            Err(_) => return super::StorageResult::NotFound,
+        };
+
+        Python::attach(|py| {
+            CacheEntry::deserialize(py, data)
+                .ok()
+                .map(Arc::new)
+                .map(super::StorageResult::Hit)
+                .unwrap_or(super::StorageResult::NotFound)
+        })
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
@@ -125,7 +136,7 @@ impl Storage for LmdbStorage {
         self.delete_from_index(&mut txn, &key);
 
         let is_new = txn.get(self.db_main, &key).is_err();
-        let new_ts = now_secs();
+        let new_ts = now_nanos();
 
         txn.put(self.db_main, &key, &data, WriteFlags::empty())
             .map_err(to_runtime_err)?;
@@ -179,8 +190,9 @@ impl Storage for LmdbStorage {
 
     fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
         let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
-        let now = now_secs();
-        let now_le = now.to_le_bytes();
+        let now_n = now_nanos();
+        let now_s = now_secs();
+        let now_le = now_n.to_le_bytes();
         for (key, ttl) in updates {
             self.delete_from_index(&mut txn, &key);
 
@@ -188,14 +200,14 @@ impl Storage for LmdbStorage {
                 .map_err(to_runtime_err)?;
             txn.put(
                 self.db_lru_index,
-                &Self::make_index_key(now, &key),
+                &Self::make_index_key(now_n, &key),
                 &[],
                 WriteFlags::empty(),
             )
             .map_err(to_runtime_err)?;
 
             if let Some(t) = ttl {
-                let expire_at = now + t;
+                let expire_at = now_s + t;
                 txn.put(
                     self.db_ttls,
                     &key,

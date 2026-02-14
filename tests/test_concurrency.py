@@ -215,3 +215,72 @@ def test_sync_stress_race_condition():
         t.join()
 
     assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_flight_timeout_configurable_async():
+    from zoocache import reset, configure
+
+    # Ensure fresh state
+    reset()
+    # Configure with a very short timeout (1 second)
+    configure(flight_timeout=1)
+
+    # Define a dependency function that takes 2 seconds (exceeds timeout)
+    async def slow_func():
+        await asyncio.sleep(2)
+        return "slow"
+
+    # Wrap it with cacheable
+    cached_slow = cacheable(slow_func)
+
+    # First call will be the leader
+    task1 = asyncio.create_task(cached_slow())
+
+    # Wait a bit to ensure task1 is leader
+    await asyncio.sleep(0.1)
+
+    # Second call should wait for task1, but timeout after 1s
+    with pytest.raises(RuntimeError, match="Thundering herd leader failed"):
+        await cached_slow()
+
+    # Clean up
+    await task1
+    reset()
+
+
+def test_flight_timeout_configurable_sync():
+    from zoocache import reset, configure
+
+    # Ensure fresh state
+    reset()
+    # Configure with a very short timeout (1 second)
+    configure(flight_timeout=1)
+
+    # Define a dependency function that takes 2 seconds (exceeds timeout)
+    def slow_func():
+        time.sleep(2)
+        return "slow"
+
+    # Wrap it with cacheable
+    cached_slow = cacheable(slow_func)
+
+    def call_slow():
+        try:
+            cached_slow()
+        except Exception:
+            pass
+
+    # First call will be the leader
+    t1 = threading.Thread(target=call_slow)
+    t1.start()
+
+    # Wait a bit to ensure t1 is leader
+    time.sleep(0.1)
+
+    # Second call should wait for t1, but timeout after 1s
+    with pytest.raises(RuntimeError, match="Thundering herd leader failed"):
+        cached_slow()
+
+    t1.join()
+    reset()
