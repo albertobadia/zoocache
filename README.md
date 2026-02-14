@@ -100,6 +100,10 @@ Explore the deep dives into Zoocache's architecture and features:
 - [**Django Serializers Auto**](https://github.com/albertobadia/zoocache/blob/main/docs/django_serializers.md) - Automatic caching for Django REST Framework.
 - [**Reliability & Edge Cases**](https://github.com/albertobadia/zoocache/blob/main/docs/reliability.md) - Fail-fast mechanisms and memory management.
 
+### Architectural Decisions (ADR)
+- [**ADR 0001: Prefix-Trie Invalidation**](https://github.com/albertobadia/zoocache/blob/main/docs/adr/0001-prefix-trie-invalidation.md)
+- [**ADR 0007: Zero-Bridge Serialization**](https://github.com/albertobadia/zoocache/blob/main/docs/adr/0007-zero-bridge-serialization.md)
+
 ---
 
 ## ⚖️ Comparison

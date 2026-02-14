@@ -66,3 +66,5 @@ nav:
       - "ADR 0006: Trie Performance Optimizations": adr/0006-trie-performance-optimizations.md
       - "ADR 0007: Zero-Bridge Serialization": adr/0007-zero-bridge-serialization.md
       - "ADR 0008: Redis Bus Connection Pooling": adr/0008-redis-bus-connection-pooling.md
+      - "ADR 0009: Robust Sync & Error Handling": adr/0009-robust-sync-and-error-handling.md
+      - "ADR 0010: Intelligent Serializer Caching": adr/0010-intelligent-serializer-caching.md
