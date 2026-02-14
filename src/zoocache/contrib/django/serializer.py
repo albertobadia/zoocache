@@ -126,7 +126,9 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
             return cached
 
         data = super().to_representation(instance)
-        deps = {instance_tag(instance)} | {model_tag(m) for m in self._get_related_models()}
+        deps = {instance_tag(instance)} | {
+            model_tag(m) for m in self._get_related_models()
+        }
         core.set(key, data, list(deps))
         return data
 

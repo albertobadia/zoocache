@@ -7,7 +7,7 @@ from django.db.models.query import ModelIterable, prefetch_related_objects
 from django.db.models.signals import post_save, post_delete, m2m_changed
 
 from zoocache.core import _manager
-from .util import model_tag, instance_tag
+from .util import model_tag
 
 INTERNAL_CACHE_KEY_RELATED = "_zoo_related"
 _json_encoder = DjangoJSONEncoder()
@@ -134,7 +134,6 @@ def _get_query_deps(queryset):
 
 
 class ZooCacheQuerySet(models.QuerySet):
-
     _zoo_ttl: Optional[int] = None
     _zoo_prefix: Optional[str] = None
 
@@ -154,7 +153,9 @@ class ZooCacheQuerySet(models.QuerySet):
         return f"{sql}|{params}"
 
     def _get_cache_key(self):
-        return _make_cache_key(self._zoo_prefix, self.model, self._get_query_fingerprint())
+        return _make_cache_key(
+            self._zoo_prefix, self.model, self._get_query_fingerprint()
+        )
 
     def _fetch_all(self):
         if self._result_cache is not None:
@@ -241,7 +242,6 @@ def _auto_configure():
 
 
 class ZooCacheManager(models.Manager):
-
     def __init__(self, *, ttl=None, prefix=None, ensure_objects_manager=True):
         super().__init__()
         self._zoo_ttl = ttl
