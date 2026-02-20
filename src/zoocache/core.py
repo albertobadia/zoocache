@@ -16,6 +16,7 @@ class CacheManager:
         self._op_count: int = 0
         self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
         self._telemetry: TelemetryManager = TelemetryManager()
+        self._last_tti_dropped: int = 0
 
     @property
     def telemetry(self) -> TelemetryManager:
@@ -46,6 +47,14 @@ class CacheManager:
             if age := self.config.get("prune_after"):
                 core = self.get_core()
                 core.request_prune(age)
+
+            # Report TTI saturation to telemetry
+            if self.core:
+                current_dropped = self.core.tti_dropped_messages()
+                if current_dropped > self._last_tti_dropped:
+                    delta = current_dropped - self._last_tti_dropped
+                    self.telemetry.increment("cache_tti_overflows_total", delta)
+                    self._last_tti_dropped = current_dropped
 
     def reset(self) -> None:
         self.core = None

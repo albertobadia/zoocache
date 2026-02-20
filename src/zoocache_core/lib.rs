@@ -14,6 +14,7 @@ use crate::utils::{to_conn_err, to_runtime_err};
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -63,6 +64,7 @@ struct Core {
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
     tti_tx: Option<SyncSender<WorkerMsg>>,
+    dropped_tti_msgs: AtomicU64,
     flight_timeout: u64,
 }
 
@@ -192,6 +194,7 @@ impl Core {
             default_ttl,
             max_entries,
             tti_tx,
+            dropped_tti_msgs: AtomicU64::new(0),
             flight_timeout: flight_timeout.unwrap_or(60),
         })
     }
@@ -271,17 +274,14 @@ impl Core {
         let (entry, expires_at) = match status {
             storage::StorageResult::Hit(e, exp) => (e, exp),
             storage::StorageResult::Expired => {
-                if let Some(tx) = &self.tti_tx {
-                    let _ = tx.try_send(WorkerMsg::Delete(key.to_string()));
-                }
+                self.send_tti_msg(WorkerMsg::Delete(key.to_string()));
                 return Ok(None);
             }
             storage::StorageResult::NotFound => return Ok(None),
         };
 
-        let global_version = self.trie.get_global_version();
-
-        if entry.trie_version == global_version {
+        let current_global_version = self.trie.get_global_version();
+        if entry.trie_version == current_global_version {
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
@@ -292,21 +292,18 @@ impl Core {
             return Ok(None);
         }
 
-        if let Some(tx) = &self.tti_tx {
-            let current_global_version = self.trie.get_global_version();
-            if entry.trie_version < current_global_version {
-                let updated_entry = storage::CacheEntry {
-                    value: entry.value.clone_ref(py),
-                    dependencies: entry.dependencies.clone(),
-                    trie_version: current_global_version,
-                };
-                if let Ok(data) = updated_entry.serialize(py) {
-                    let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
-                    let _ = tx.try_send(WorkerMsg::Update(key.to_string(), data, ttl));
-                }
-            } else {
-                let _ = tx.try_send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
+        if entry.trie_version < current_global_version {
+            let updated_entry = storage::CacheEntry {
+                value: entry.value.clone_ref(py),
+                dependencies: entry.dependencies.clone(),
+                trie_version: current_global_version,
+            };
+            if let Ok(data) = updated_entry.serialize(py) {
+                let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
+                self.send_tti_msg(WorkerMsg::Update(key.to_string(), data, ttl));
             }
+        } else {
+            self.send_tti_msg(WorkerMsg::Touch(key.to_string(), self.default_ttl));
         }
 
         Ok(Some(entry.value.clone_ref(py)))
@@ -370,9 +367,7 @@ impl Core {
     }
 
     fn request_prune(&self, max_age_secs: u64) {
-        if let Some(tx) = &self.tti_tx {
-            let _ = tx.try_send(WorkerMsg::Prune(max_age_secs));
-        }
+        self.send_tti_msg(WorkerMsg::Prune(max_age_secs));
     }
 
     fn prune(&self, max_age_secs: u64) {
@@ -389,6 +384,20 @@ impl Core {
 
     fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
+    }
+
+    fn tti_dropped_messages(&self) -> u64 {
+        self.dropped_tti_msgs.load(Ordering::Relaxed)
+    }
+}
+
+impl Core {
+    fn send_tti_msg(&self, msg: WorkerMsg) {
+        if let Some(Err(mpsc::TrySendError::Full(_))) =
+            self.tti_tx.as_ref().map(|tx| tx.try_send(msg))
+        {
+            self.dropped_tti_msgs.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
