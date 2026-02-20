@@ -68,10 +68,18 @@ impl Storage for RedisStorage {
         }
 
         let result = Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new));
-
         match result {
             Some(entry) => super::StorageResult::Hit(entry),
-            None => super::StorageResult::NotFound,
+            None => {
+                // If we have data but deserialization failed, it's corrupted.
+                // We should remove it to keep the storage clean.
+                let _: () = redis::pipe()
+                    .del(self.full_key(key))
+                    .zrem(self.lru_key(), key)
+                    .query(&mut conn)
+                    .unwrap_or_default();
+                super::StorageResult::NotFound
+            }
         }
     }
 
