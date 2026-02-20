@@ -289,18 +289,6 @@ impl Core {
             return Ok(None);
         }
 
-        let current_global_version = self.trie.get_global_version();
-        if entry.trie_version < current_global_version {
-            let storage = Arc::clone(&self.storage);
-            let updated_entry = Arc::new(crate::storage::CacheEntry {
-                value: entry.value.clone_ref(py),
-                dependencies: entry.dependencies.clone(),
-                trie_version: current_global_version,
-            });
-            let key_str = key.to_string();
-            py.detach(move || storage.set(key_str, updated_entry, None))?;
-        }
-
         if let Some(tx) = &self.tti_tx {
             let _ = tx.send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
         }
