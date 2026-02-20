@@ -28,12 +28,12 @@ class PrometheusAdapter(TelemetryAdapter):
         cache_key = (type_, full_name, tuple(label_names))
 
         if cache_key not in self._metrics:
-            kwargs = {"registry": self._registry}
+            kwargs: dict[str, Any] = {"registry": self._registry}
             if type_ == "histogram":
                 kwargs["buckets"] = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0)
 
-            metric_cls = {"counter": Counter, "histogram": Histogram, "gauge": Gauge}[type_]
-            self._metrics[cache_key] = metric_cls(full_name, f"ZooCache {name}", label_names, **kwargs)
+            cls = {"counter": Counter, "histogram": Histogram, "gauge": Gauge}[type_]
+            self._metrics[cache_key] = cls(full_name, f"ZooCache {name}", label_names, **kwargs)
 
         metric = self._metrics[cache_key]
         return metric.labels(**labels) if labels else metric

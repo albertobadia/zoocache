@@ -33,20 +33,8 @@ class CacheManager:
 
     def get_core(self) -> Core:
         if self.core is None:
-            exclude = ("prune_after", "flight_timeout", "tti_flush_secs", "lru_update_interval")
-            core_args = {k: v for k, v in self.config.items() if k not in exclude}
-
-            if timeout := self.config.get("flight_timeout"):
-                core_args["flight_timeout"] = timeout
-            if tti_flush := self.config.get("tti_flush_secs"):
-                core_args["tti_flush_secs"] = tti_flush
-            if auto_prune_secs := self.config.get("auto_prune_secs"):
-                core_args["auto_prune_secs"] = auto_prune_secs
-            if auto_prune_interval := self.config.get("auto_prune_interval"):
-                core_args["auto_prune_interval"] = auto_prune_interval
-            if lru_update_interval := self.config.get("lru_update_interval"):
-                core_args["lru_update_interval"] = lru_update_interval
-
+            # prune_after is handled by the manager, not the Rust core
+            core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
             self.core = Core(**core_args)
         return self.core
 
@@ -174,8 +162,7 @@ def cacheable(
     def decorator(fn: Callable):
         @functools.wraps(fn)
         async def async_wrapper(*args, **kwargs):
-            core = _manager.get_core()
-            key = _generate_key(fn, namespace, args, kwargs)
+            core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
             _manager.maybe_prune()
 
             while True:
@@ -197,20 +184,18 @@ def cacheable(
                 sig = _register_flight_signal(key)
                 try:
                     val, is_leader, fut = core.get_or_entry_async(key)
-
                     if val is not None:
                         return val
                     if is_leader:
                         break
                     if fut is not None:
                         return await _wait_for_leader(fut)
-
                     await sig.wait()
                 finally:
                     _resolve_flight_signals(key)
 
+            leader_fut = asyncio.get_running_loop().create_future()
             try:
-                leader_fut = asyncio.get_running_loop().create_future()
                 core.register_flight_future(key, leader_fut)
             finally:
                 _resolve_flight_signals(key)
@@ -233,29 +218,31 @@ def cacheable(
 
         @functools.wraps(fn)
         def sync_wrapper(*args, **kwargs):
-            core = _manager.get_core()
-            key = _generate_key(fn, namespace, args, kwargs)
+            core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
             _manager.maybe_prune()
 
             val, is_leader = core.get_or_entry(key)
-            if not is_leader:
+            if val is not None:
                 _manager.telemetry.increment("cache_hits_total")
                 return val
 
             _manager.telemetry.increment("cache_misses_total")
+            if not is_leader:
+                return fn(*args, **kwargs)  # Bypass to avoid returning None if leader active
+
             try:
                 with DepsTracker():
                     res = fn(*args, **kwargs)
                     with _manager.telemetry.time_operation("cache_set_duration_seconds"):
                         core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
-                _resolve_flight_signals(key)
                 return res
             except Exception:
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 core.finish_flight(key, True, None)
-                _resolve_flight_signals(key)
                 raise
+            finally:
+                _resolve_flight_signals(key)
 
         return async_wrapper if inspect.iscoroutinefunction(fn) else sync_wrapper
 

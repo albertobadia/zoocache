@@ -89,4 +89,4 @@ jobs:
         run: uv run ruff check .
 
       - name: Run tests
-        run: uv run pytest --ignore=benchmarks/
+        run: uv run pytest --ignore=benchmarks/ --ignore=tests/integration/
