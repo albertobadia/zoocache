@@ -1,4 +1,4 @@
-from zoocache import cacheable, invalidate, add_deps
+from zoocache import add_deps, cacheable, invalidate
 
 
 def test_basic_invalidation():

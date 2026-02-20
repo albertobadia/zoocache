@@ -4,14 +4,17 @@ on:
   push:
     branches:
       - main
+      - dev
   pull_request:
     branches:
       - main
+      - dev
 
 permissions:
   contents: write
   pages: write
   id-token: write
+  pull-requests: write
 
 jobs:
   benchmark:
@@ -50,6 +53,7 @@ jobs:
           uv run python benchmarks/reports/update_readme.py
 
       - name: Update README with markdown-autodocs
+        if: github.event_name == 'push'
         uses: dineshsonachalam/markdown-autodocs@v1.0.4
         with:
           # Optional: Use a custom configuration file
@@ -65,9 +69,9 @@ jobs:
           name: Python Benchmark
           tool: 'pytest'
           output-file-path: benchmarks/output.json
-          benchmark-data-dir-path: docs/benchmarks
+          benchmark-data-dir-path: benchmarks
           fail-on-alert: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
+          auto-push: ${{ github.event_name == 'push' }}
           comment-on-alert: true
           alert-threshold: '150%'

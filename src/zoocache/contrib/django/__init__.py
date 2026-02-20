@@ -1,19 +1,19 @@
-from .util import (
-    model_tag,
-    instance_tag,
-)
 from .model import (
-    ZooCacheQuerySet,
     ZooCacheManager,
+    ZooCacheQuerySet,
+    _get_query_deps,
     _model_to_raw,
     _raw_to_instance,
-    _get_query_deps,
 )
 from .serializer import (
     BaseCacheableSerializerMixin,
-    CacheableSerializerMixin,
     CacheableListSerializerMixin,
+    CacheableSerializerMixin,
     cacheable_serializer,
+)
+from .util import (
+    instance_tag,
+    model_tag,
 )
 
 __all__ = [

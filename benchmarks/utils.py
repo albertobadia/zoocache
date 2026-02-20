@@ -1,6 +1,7 @@
-import time
 import functools
-from typing import Callable, Any
+import time
+from collections.abc import Callable
+from typing import Any
 
 
 def simulated_latency(ms: float = 5.0):

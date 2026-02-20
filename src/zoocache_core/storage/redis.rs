@@ -10,18 +10,27 @@ use super::{CacheEntry, Storage};
 pub(crate) struct RedisStorage {
     pool: Pool<Client>,
     prefix: String,
+    lru_update_interval: u64,
 }
 
 const GET_AND_TOUCH_SCRIPT: &str = r#"
     local val = redis.call('GET', KEYS[1])
+    local pttl = redis.call('PTTL', KEYS[1])
     if val then
-        redis.call('ZADD', KEYS[2], ARGV[1], ARGV[2])
+        local current_score = redis.call('ZSCORE', KEYS[2], ARGV[2])
+        if not current_score or (tonumber(ARGV[1]) - tonumber(current_score) >= tonumber(ARGV[3])) then
+            redis.call('ZADD', KEYS[2], ARGV[1], ARGV[2])
+        end
     end
-    return val
+    return {val, pttl}
 "#;
 
 impl RedisStorage {
-    pub fn new(url: &str, prefix: Option<&str>) -> Result<Self, redis::RedisError> {
+    pub fn new(
+        url: &str,
+        prefix: Option<&str>,
+        lru_update_interval: u64,
+    ) -> Result<Self, redis::RedisError> {
         let client = Client::open(url)?;
         let pool = Pool::builder()
             .build(client)
@@ -30,6 +39,7 @@ impl RedisStorage {
         Ok(Self {
             pool,
             prefix: prefix.unwrap_or("zoocache").to_string(),
+            lru_update_interval,
         })
     }
 
@@ -49,17 +59,17 @@ impl Storage for RedisStorage {
             Err(_) => return super::StorageResult::NotFound,
         };
 
-        // Atomic GET + LRU update using Lua
         let now = now_secs() as f64;
         let script = redis::Script::new(GET_AND_TOUCH_SCRIPT);
-        let data: Vec<u8> = match script
+        let (data, pttl): (Vec<u8>, i64) = match script
             .key(self.full_key(key))
             .key(self.lru_key())
             .arg(now)
             .arg(key)
+            .arg(self.lru_update_interval)
             .invoke(&mut conn)
         {
-            Ok(d) => d,
+            Ok(res) => res,
             Err(_) => return super::StorageResult::NotFound,
         };
 
@@ -68,10 +78,23 @@ impl Storage for RedisStorage {
         }
 
         let result = Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new));
-
         match result {
-            Some(entry) => super::StorageResult::Hit(entry),
-            None => super::StorageResult::NotFound,
+            Some(entry) => {
+                let expires_at = if pttl > 0 {
+                    Some(now_secs() + (pttl as u64 / 1000))
+                } else {
+                    None
+                };
+                super::StorageResult::Hit(entry, expires_at)
+            }
+            None => {
+                let _: () = redis::pipe()
+                    .del(self.full_key(key))
+                    .zrem(self.lru_key(), key)
+                    .query(&mut conn)
+                    .unwrap_or_default();
+                super::StorageResult::NotFound
+            }
         }
     }
 
@@ -89,6 +112,20 @@ impl Storage for RedisStorage {
             pipe.zadd(self.lru_key(), &key, now_secs() as f64);
             let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
         }
+        Ok(())
+    }
+
+    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
+        let full_key = self.full_key(&key);
+        let mut pipe = redis::pipe();
+
+        match ttl {
+            Some(t) => pipe.set_ex(&full_key, data, t),
+            None => pipe.set(&full_key, data),
+        };
+        pipe.zadd(self.lru_key(), &key, now_secs() as f64);
+        let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
         Ok(())
     }
 

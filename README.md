@@ -1,5 +1,9 @@
 <p align="center">
-  <img alt="ZooCache Logo" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-light.svg" width="600">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-light.svg">
+    <img alt="ZooCache Logo" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-light.svg" width="600">
+  </picture>
 </p>
 
 <p align="center">
@@ -7,7 +11,7 @@
 </p>
 <div align="center" markdown="1">
 
-[**📖 Read the User Guide**](https://github.com/albertobadia/zoocache/blob/main/docs/user_guide.md)
+[**📖 Read the User Guide**](docs/user_guide.md)
 
 </div>
 <p align="center">
@@ -16,7 +20,7 @@
   <a href="https://pypi.org/project/zoocache/"><img alt="PyPI" src="https://img.shields.io/pypi/v/zoocache?style=flat-square&logo=pypi&logoColor=white"></a>
   <a href="https://pypi.org/project/zoocache/"><img alt="Downloads" src="https://img.shields.io/pepy/dt/zoocache?style=flat-square&color=blue"></a>
   <a href="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/albertobadia/zoocache/ci.yml?branch=main&style=flat-square&logo=github"></a>
-  <a href="https://albertobadia.github.io/zoocache/main/bench/"><img alt="Benchmarks" src="https://img.shields.io/badge/benchmarks-charts-orange?style=flat-square&logo=google-cloud&logoColor=white"></a>
+  <a href="https://albertobadia.github.io/zoocache/benchmarks/"><img alt="Benchmarks" src="https://img.shields.io/badge/benchmarks-charts-orange?style=flat-square&logo=google-cloud&logoColor=white"></a>
   <a href="https://zoocache.readthedocs.io/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/zoocache?style=flat-square&logo=readthedocs"></a>
 </p>
 
@@ -31,6 +35,7 @@
 - 📦 **Smart Serialization**: Transparently handles MsgPack and LZ4 compression for maximum throughput and minimum storage.
 - 🔄 **Self-Healing Distributed Cache**: Automatic synchronization via Redis Bus with robust error recovery.
 - 🛡️ **Hardened Safety**: Strict tag validation and mutex-poisoning protection to ensure zero-crash operations.
+- 📊 **Observability & Telemetry**: Built-in support for Logs, Prometheus, and OpenTelemetry to monitor cache performance.
 
 ---
 
@@ -90,19 +95,19 @@ def get_product_page(product_id: int, store_id: int):
 
 Explore the deep dives into Zoocache's architecture and features:
 
-- [**Architecture Overview**](https://github.com/albertobadia/zoocache/blob/main/docs/architecture.md) - How the Rust core and Python wrapper interact.
-- [**Hierarchical Invalidation**](https://github.com/albertobadia/zoocache/blob/main/docs/invalidation.md) - Deep dive into the PrefixTrie and O(D) invalidation.
-- [**Serialization Pipeline**](https://github.com/albertobadia/zoocache/blob/main/docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
-- [**Concurrency & SingleFlight**](https://github.com/albertobadia/zoocache/blob/main/docs/concurrency.md) - Shielding your database from traffic spikes.
-- [**Distributed Consistency**](https://github.com/albertobadia/zoocache/blob/main/docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
-- [**Django Integration**](https://github.com/albertobadia/zoocache/blob/main/docs/django.md) - Using ZooCache with the Django ORM.
-- [**Django User Guide**](https://github.com/albertobadia/zoocache/blob/main/docs/django_user_guide.md) - Detailed guide for Django users.
-- [**Django Serializers Auto**](https://github.com/albertobadia/zoocache/blob/main/docs/django_serializers.md) - Automatic caching for Django REST Framework.
-- [**Reliability & Edge Cases**](https://github.com/albertobadia/zoocache/blob/main/docs/reliability.md) - Fail-fast mechanisms and memory management.
+- [**Architecture Overview**](docs/architecture.md) - How the Rust core and Python wrapper interact.
+- [**Hierarchical Invalidation**](docs/invalidation.md) - Deep dive into the PrefixTrie and O(D) invalidation.
+- [**Serialization Pipeline**](docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
+- [**Concurrency & SingleFlight**](docs/concurrency.md) - Shielding your database from traffic spikes.
+- [**Distributed Consistency**](docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
+- [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
+- [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
+- [**Django Serializers Auto**](docs/django_serializers.md) - Automatic caching for Django REST Framework.
+- [**Reliability & Edge Cases**](docs/reliability.md) - Fail-fast mechanisms and memory management.
 
 ### Architectural Decisions (ADR)
-- [**ADR 0001: Prefix-Trie Invalidation**](https://github.com/albertobadia/zoocache/blob/main/docs/adr/0001-prefix-trie-invalidation.md)
-- [**ADR 0007: Zero-Bridge Serialization**](https://github.com/albertobadia/zoocache/blob/main/docs/adr/0007-zero-bridge-serialization.md)
+- [**ADR 0001: Prefix-Trie Invalidation**](docs/adr/0001-prefix-trie-invalidation.md)
+- [**ADR 0007: Zero-Bridge Serialization**](docs/adr/0007-zero-bridge-serialization.md)
 
 ---
 
@@ -143,4 +148,4 @@ Zoocache is continuously benchmarked to ensure zero performance regressions. We 
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/albertobadia/zoocache/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

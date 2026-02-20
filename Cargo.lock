@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "zoocache"
-version = "2026.2.14"
+version = "2026.2.20"
 dependencies = [
  "dashmap",
  "lmdb",

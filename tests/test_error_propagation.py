@@ -1,4 +1,5 @@
 import pytest
+
 from zoocache import configure, reset
 from zoocache.core import _manager
 

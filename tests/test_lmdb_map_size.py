@@ -1,5 +1,6 @@
 import pytest
-from zoocache import configure, reset, cacheable
+
+from zoocache import cacheable, configure, reset
 
 
 @pytest.fixture(autouse=True)

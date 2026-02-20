@@ -1,7 +1,9 @@
-import time
 import threading
+import time
+
 import pytest
-from zoocache import cacheable, invalidate, clear
+
+from zoocache import cacheable, clear, invalidate
 
 
 @pytest.fixture(autouse=True)

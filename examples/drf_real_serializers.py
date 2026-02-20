@@ -20,9 +20,10 @@ if not settings.configured:
     )
     django.setup()
 
-from django.db import models, connection
+from django.db import connection, models
 from rest_framework import serializers
-from zoocache import configure, clear
+
+from zoocache import clear, configure
 from zoocache.contrib.django import cacheable_serializer
 
 
@@ -59,9 +60,7 @@ class AuthorDetailSerializer(serializers.ModelSerializer):
         fields = ["name", "books"]
 
     def to_representation(self, instance):
-        print(
-            f"--- [DEBUG] Serializing Author: {instance.name} (Computing representation) ---"
-        )
+        print(f"--- [DEBUG] Serializing Author: {instance.name} (Computing representation) ---")
         return super().to_representation(instance)
 
 

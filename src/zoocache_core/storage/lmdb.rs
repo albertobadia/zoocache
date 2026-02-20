@@ -50,7 +50,7 @@ impl LmdbStorage {
 
         let count = (|| {
             let txn = env.begin_ro_txn().ok()?;
-            let data = txn.get(db_meta, &"count").ok()?;
+            let data = txn.get(db_meta, b"count").ok()?;
             let bytes: [u8; 8] = data.try_into().ok()?;
             Some(u64::from_le_bytes(bytes))
         })()
@@ -106,13 +106,13 @@ impl Storage for LmdbStorage {
             Err(_) => return super::StorageResult::NotFound,
         };
 
-        if txn
+        let expires_at = txn
             .get(self.db_ttls, &key)
             .ok()
             .and_then(|d| d.try_into().ok().map(u64::from_le_bytes))
-            .filter(|&ts| ts != 0 && now_secs() > ts)
-            .is_some()
-        {
+            .filter(|&ts| ts != 0);
+
+        if expires_at.is_some_and(|ts| now_secs() > ts) {
             return super::StorageResult::Expired;
         }
 
@@ -125,7 +125,7 @@ impl Storage for LmdbStorage {
             CacheEntry::deserialize(py, data)
                 .ok()
                 .map(Arc::new)
-                .map(super::StorageResult::Hit)
+                .map(|e| super::StorageResult::Hit(e, expires_at))
                 .unwrap_or(super::StorageResult::NotFound)
         })
     }
@@ -173,7 +173,64 @@ impl Storage for LmdbStorage {
             let new_count = current_count + 1;
             txn.put(
                 self.db_meta,
-                &"count",
+                b"count",
+                &(new_count as u64).to_le_bytes(),
+                WriteFlags::empty(),
+            )
+            .map_err(to_runtime_err)?;
+        }
+
+        txn.commit().map_err(to_runtime_err)?;
+
+        if is_new {
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
+        self.delete_from_index(&mut txn, &key);
+
+        let is_new = txn.get(self.db_main, &key).is_err();
+        let new_ts = now_nanos();
+
+        txn.put(self.db_main, &key, &data, WriteFlags::empty())
+            .map_err(to_runtime_err)?;
+        txn.put(
+            self.db_lru,
+            &key,
+            &new_ts.to_le_bytes(),
+            WriteFlags::empty(),
+        )
+        .map_err(to_runtime_err)?;
+        txn.put(
+            self.db_lru_index,
+            &Self::make_index_key(new_ts, &key),
+            &[],
+            WriteFlags::empty(),
+        )
+        .map_err(to_runtime_err)?;
+
+        if let Some(t) = ttl {
+            let expire_at = now_secs() + t;
+            txn.put(
+                self.db_ttls,
+                &key,
+                &expire_at.to_le_bytes(),
+                WriteFlags::empty(),
+            )
+            .map_err(to_runtime_err)?;
+        } else {
+            let _ = txn.del(self.db_ttls, &key, None);
+        }
+
+        if is_new {
+            let current_count = self.count.load(Ordering::SeqCst);
+            let new_count = current_count + 1;
+            txn.put(
+                self.db_meta,
+                b"count",
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
             )
@@ -227,7 +284,7 @@ impl Storage for LmdbStorage {
             let new_count = current_count.saturating_sub(1);
             txn.put(
                 self.db_meta,
-                &"count",
+                b"count",
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
             )
@@ -281,7 +338,7 @@ impl Storage for LmdbStorage {
         let new_count = current_count.saturating_sub(evicted_count);
         txn.put(
             self.db_meta,
-            &"count",
+            b"count",
             &(new_count as u64).to_le_bytes(),
             WriteFlags::empty(),
         )

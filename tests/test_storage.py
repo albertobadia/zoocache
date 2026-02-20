@@ -1,7 +1,8 @@
 import os
 import shutil
 import tempfile
-from zoocache import cacheable, invalidate, configure, reset
+
+from zoocache import cacheable, configure, invalidate, reset
 
 
 def test_large_data_objects():

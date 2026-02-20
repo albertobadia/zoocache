@@ -31,7 +31,7 @@ impl Storage for InMemoryStorage {
         }
 
         *last_accessed = now_secs();
-        super::StorageResult::Hit(Arc::clone(val))
+        super::StorageResult::Hit(Arc::clone(val), *expires_at)
     }
 
     #[inline]

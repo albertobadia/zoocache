@@ -1,4 +1,5 @@
 import time
+
 import django
 from django.conf import settings
 
@@ -21,9 +22,10 @@ if not settings.configured:
     )
     django.setup()
 
-from django.db import models, connection
+from django.db import connection, models
 from rest_framework import serializers
-from zoocache import configure, clear, reset
+
+from zoocache import clear, configure, reset
 from zoocache.contrib.django import cacheable_serializer
 
 

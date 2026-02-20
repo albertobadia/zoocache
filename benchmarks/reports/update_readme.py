@@ -29,7 +29,7 @@ def generate_report():
         print(f"Error: {json_path} not found")
         return
 
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
 
     benchmarks = data.get("benchmarks", [])
@@ -49,7 +49,7 @@ def generate_report():
         "Core Hit Latency": "Time to retrieve a single cached value (In-Memory).",
         "Prefix Invalidation (1k)": "Time to invalidate 1,000 keys using a prefix-based tag.",
         "Scaling (10k deps)": "Read latency when a single key depends on 10,000 different tags.",
-        "SingleFlight Protection": "Prevents 'thundering herd' by coalescing 50 simultaneous expensive requests into 1 DB call.",
+        "SingleFlight Protection": "Prevents 'thundering herd' by coalescing concurrent expensive requests.",
         "Deep Hierarchy (15 lvls)": "Validation overhead for keys with deep nested dependencies.",
         "Max Throughput (Concurrent)": "Total operations per second under heavy parallel load (200 threads).",
         "Django Count Speedup": "Performance gain of .count() via cache vs raw DB QuerySet.",
@@ -88,17 +88,22 @@ def generate_report():
 
             if match_key == "test_high_concurrency_throughput":
                 ops = 1000.0 / stats["mean"]
+                min_ops = 1000.0 / stats["max"]
+                max_ops = 1000.0 / stats["min"]
+                med_ops = 1000.0 / stats["median"]
                 perf_rows.append(
-                    f"| {label} | {format_ops(ops)} ops/s | {format_ops(1000.0 / stats['max'])} | {format_ops(1000.0 / stats['min'])} | {format_ops(1000.0 / stats['median'])} | - |"
+                    f"| {label} | {format_ops(ops)} ops/s | {format_ops(min_ops)} | "
+                    f"{format_ops(max_ops)} | {format_ops(med_ops)} | - |"
                 )
             else:
                 perf_rows.append(
-                    f"| {label} | {format_time(mean_ns)} | {format_time(min_ns)} | {format_time(max_ns)} | {format_time(median_ns)} | {format_time(stddev_ns)} |"
+                    f"| {label} | {format_time(mean_ns)} | {format_time(min_ns)} | "
+                    f"{format_time(max_ns)} | {format_time(median_ns)} | {format_time(stddev_ns)} |"
                 )
 
     hw_rows = []
     if os.path.exists(hardware_path):
-        with open(hardware_path, "r") as f:
+        with open(hardware_path) as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("- **"):

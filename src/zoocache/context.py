@@ -1,9 +1,6 @@
 from contextvars import ContextVar
-from typing import Set, Optional
 
-_DEPS_CONTEXT: ContextVar[Optional[Set[str]]] = ContextVar(
-    "_DEPS_CONTEXT", default=None
-)
+_DEPS_CONTEXT: ContextVar[set[str] | None] = ContextVar("_DEPS_CONTEXT", default=None)
 
 
 def add_deps(deps: list[str]) -> None:
@@ -12,13 +9,13 @@ def add_deps(deps: list[str]) -> None:
         ctx.update(deps)
 
 
-def get_current_deps() -> Optional[Set[str]]:
+def get_current_deps() -> set[str] | None:
     return _DEPS_CONTEXT.get()
 
 
 class DepsTracker:
     def __init__(self):
-        self.deps: Set[str] = set()
+        self.deps: set[str] = set()
         self.token = None
 
     def __enter__(self):

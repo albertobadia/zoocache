@@ -1,5 +1,8 @@
+import time
+
 import pytest
-from zoocache import cacheable, invalidate, clear
+
+from zoocache import cacheable, clear, invalidate
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +31,9 @@ def test_lazy_update_lifecycle(benchmark):
 
         # 3. First hit after global change (O(N) + Lazy Update)
         heavy_func()
+
+        # Allow background worker to complete the lazy update
+        time.sleep(0.001)
 
         # 4. Second hit (O(1) again)
         heavy_func()

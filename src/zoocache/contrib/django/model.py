@@ -1,12 +1,13 @@
 from hashlib import sha256
-from typing import Optional
+
 from django.apps import apps
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models, transaction
 from django.db.models.query import ModelIterable, prefetch_related_objects
-from django.db.models.signals import post_save, post_delete, m2m_changed
+from django.db.models.signals import m2m_changed, post_delete, post_save
 
 from zoocache.core import _manager
+
 from .util import model_tag
 
 INTERNAL_CACHE_KEY_RELATED = "_zoo_related"
@@ -68,11 +69,7 @@ def _raw_to_instance(model, data, db="default"):
     rel_data = data.pop(INTERNAL_CACHE_KEY_RELATED, None)
 
     concrete_fields = {f.attname: f for f in model._meta.concrete_fields}
-    init_kwargs = {
-        name: concrete_fields[name].to_python(val)
-        for name, val in data.items()
-        if name in concrete_fields
-    }
+    init_kwargs = {name: concrete_fields[name].to_python(val) for name, val in data.items() if name in concrete_fields}
 
     instance = model(**init_kwargs)
     instance._state.adding = False
@@ -134,8 +131,8 @@ def _get_query_deps(queryset):
 
 
 class ZooCacheQuerySet(models.QuerySet):
-    _zoo_ttl: Optional[int] = None
-    _zoo_prefix: Optional[str] = None
+    _zoo_ttl: int | None = None
+    _zoo_prefix: str | None = None
 
     @property
     def _core(self):
@@ -153,9 +150,7 @@ class ZooCacheQuerySet(models.QuerySet):
         return f"{sql}|{params}"
 
     def _get_cache_key(self):
-        return _make_cache_key(
-            self._zoo_prefix, self.model, self._get_query_fingerprint()
-        )
+        return _make_cache_key(self._zoo_prefix, self.model, self._get_query_fingerprint())
 
     def _fetch_all(self):
         if self._result_cache is not None:
@@ -168,13 +163,9 @@ class ZooCacheQuerySet(models.QuerySet):
 
         if cached is not None:
             if is_model_iter:
-                self._result_cache = [
-                    _raw_to_instance(self.model, row, db=self.db) for row in cached
-                ]
+                self._result_cache = [_raw_to_instance(self.model, row, db=self.db) for row in cached]
                 if self._prefetch_related_lookups:
-                    prefetch_related_objects(
-                        self._result_cache, *self._prefetch_related_lookups
-                    )
+                    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
             else:
                 self._result_cache = cached
             return

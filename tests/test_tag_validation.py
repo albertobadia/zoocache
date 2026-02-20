@@ -1,5 +1,6 @@
 import pytest
-from zoocache import configure, reset, invalidate, cacheable, InvalidTag
+
+from zoocache import InvalidTag, cacheable, configure, invalidate, reset
 
 
 def test_tag_validation_simple():

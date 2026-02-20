@@ -14,7 +14,8 @@ use crate::utils::{to_conn_err, to_runtime_err};
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::num::NonZeroUsize;
-use std::sync::mpsc::{self, Sender};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
@@ -51,6 +52,7 @@ enum WorkerMsg {
     Touch(String, Option<u64>),
     Prune(u64),
     Delete(String),
+    Update(String, Vec<u8>, Option<u64>),
 }
 
 #[pyclass]
@@ -61,17 +63,17 @@ struct Core {
     flights: DashMap<String, Arc<Flight>>,
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
-    tti_tx: Option<Sender<WorkerMsg>>,
+    tti_tx: Option<SyncSender<WorkerMsg>>,
+    dropped_tti_msgs: AtomicU64,
     flight_timeout: u64,
-    #[allow(dead_code)]
-    tti_flush_secs: u64,
+    bus_is_remote: bool,
 }
 
 #[pymethods]
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30))]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -82,10 +84,13 @@ impl Core {
         lmdb_map_size: Option<usize>,
         flight_timeout: Option<u64>,
         tti_flush_secs: Option<u64>,
+        auto_prune_secs: Option<u64>,
+        auto_prune_interval: Option<u64>,
+        lru_update_interval: u64,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
-                Arc::new(RedisStorage::new(url, prefix).map_err(to_conn_err)?)
+                Arc::new(RedisStorage::new(url, prefix, lru_update_interval).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
                 Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size).map_err(to_runtime_err)?)
@@ -100,9 +105,11 @@ impl Core {
         };
 
         let trie = PrefixTrie::new();
+        let mut bus_is_remote = false;
 
         let bus: Arc<dyn InvalidateBus> = match bus_url {
             Some(url) => {
+                bus_is_remote = true;
                 let channel = prefix.map(|p| format!("{}:invalidate", p));
                 let r_bus =
                     Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(to_conn_err)?);
@@ -117,10 +124,10 @@ impl Core {
         };
 
         let mut tti_tx = None;
-        let tti_flush_secs = tti_flush_secs.unwrap_or(30);
+        let tti_flush_secs_val = tti_flush_secs.unwrap_or(30);
 
         if read_extend_ttl {
-            let (tx, rx) = mpsc::channel::<WorkerMsg>();
+            let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
             let storage_worker = Arc::clone(&storage);
             let trie_worker = trie.clone();
 
@@ -130,8 +137,9 @@ impl Core {
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
                 let mut last_auto_prune = Instant::now();
-                let flush_duration = Duration::from_secs(tti_flush_secs);
-                let prune_interval = Duration::from_secs(3600); // 1 hour
+                let flush_duration = Duration::from_secs(tti_flush_secs_val);
+                let prune_interval = Duration::from_secs(auto_prune_interval.unwrap_or(3600));
+                let prune_age = auto_prune_secs.unwrap_or(3600);
 
                 while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
                     if e == mpsc::RecvTimeoutError::Timeout {
@@ -145,7 +153,8 @@ impl Core {
                         WorkerMsg::Touch(key, ttl) => {
                             if !key.is_empty() {
                                 if last_touches.get(&key).is_some_and(|&last| {
-                                    now.duration_since(last) < Duration::from_secs(30)
+                                    now.duration_since(last)
+                                        < Duration::from_secs(lru_update_interval)
                                 }) {
                                     continue;
                                 }
@@ -159,6 +168,9 @@ impl Core {
                         WorkerMsg::Delete(key) => {
                             let _ = storage_worker.remove(&key);
                         }
+                        WorkerMsg::Update(key, data, ttl) => {
+                            let _ = storage_worker.set_raw(key, data, ttl);
+                        }
                     }
 
                     if (batch.len() >= 1000 || now.duration_since(last_flush) > flush_duration)
@@ -169,7 +181,7 @@ impl Core {
                     }
 
                     if now.duration_since(last_auto_prune) > prune_interval {
-                        trie_worker.prune(3600);
+                        trie_worker.prune(prune_age);
                         last_auto_prune = now;
                     }
                 }
@@ -185,20 +197,21 @@ impl Core {
             default_ttl,
             max_entries,
             tti_tx,
+            dropped_tti_msgs: AtomicU64::new(0),
             flight_timeout: flight_timeout.unwrap_or(60),
-            tti_flush_secs,
+            bus_is_remote,
         })
     }
 
-    fn get_or_entry(&self, py: Python, key: &str) -> PyResult<(Option<Py<PyAny>>, bool)> {
+    fn get_or_entry(&self, py: Python, key: &str) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
         if let Some(res) = self.get(py, key)? {
-            return Ok((Some(res), false));
+            return Ok((Some(res), false, true));
         }
 
         let (flight, is_leader) = try_enter_flight(&self.flights, key);
 
         if is_leader {
-            return Ok((None, true));
+            return Ok((None, true, false));
         }
         let timeout = self.flight_timeout;
         let status = py.detach(|| wait_for_flight(&flight, timeout));
@@ -206,7 +219,7 @@ impl Core {
         match status {
             FlightStatus::Done => {
                 let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-                Ok((state.1.as_ref().map(|obj| obj.clone_ref(py)), false))
+                Ok((state.1.as_ref().map(|obj| obj.clone_ref(py)), false, true))
             }
             FlightStatus::Error => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "Thundering herd leader failed",
@@ -220,15 +233,15 @@ impl Core {
         &self,
         py: Python,
         key: &str,
-    ) -> PyResult<(Option<Py<PyAny>>, bool, Option<Py<PyAny>>)> {
+    ) -> PyResult<(Option<Py<PyAny>>, bool, bool, Option<Py<PyAny>>)> {
         if let Some(res) = self.get(py, key)? {
-            return Ok((Some(res), false, None));
+            return Ok((Some(res), false, true, None));
         }
 
         let (flight, is_leader) = try_enter_flight(&self.flights, key);
 
         if is_leader {
-            return Ok((None, true, None));
+            return Ok((None, true, false, None));
         }
 
         let fut = flight
@@ -237,7 +250,7 @@ impl Core {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|f| f.clone_ref(py));
-        Ok((None, false, fut))
+        Ok((None, false, false, fut))
     }
 
     fn register_flight_future(&self, key: &str, future: Py<PyAny>) {
@@ -262,20 +275,17 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let status = py.detach(|| storage.get(key));
 
-        let entry = match status {
-            storage::StorageResult::Hit(e) => e,
+        let (entry, expires_at) = match status {
+            storage::StorageResult::Hit(e, exp) => (e, exp),
             storage::StorageResult::Expired => {
-                if let Some(tx) = &self.tti_tx {
-                    let _ = tx.send(WorkerMsg::Delete(key.to_string()));
-                }
+                self.send_tti_msg(WorkerMsg::Delete(key.to_string()));
                 return Ok(None);
             }
             storage::StorageResult::NotFound => return Ok(None),
         };
 
-        let global_version = self.trie.get_global_version();
-
-        if entry.trie_version == global_version {
+        let current_global_version = self.trie.get_global_version();
+        if entry.trie_version == current_global_version {
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
@@ -286,20 +296,18 @@ impl Core {
             return Ok(None);
         }
 
-        let current_global_version = self.trie.get_global_version();
         if entry.trie_version < current_global_version {
-            let storage = Arc::clone(&self.storage);
-            let updated_entry = Arc::new(crate::storage::CacheEntry {
+            let updated_entry = storage::CacheEntry {
                 value: entry.value.clone_ref(py),
                 dependencies: entry.dependencies.clone(),
                 trie_version: current_global_version,
-            });
-            let key_str = key.to_string();
-            py.detach(move || storage.set(key_str, updated_entry, None))?;
-        }
-
-        if let Some(tx) = &self.tti_tx {
-            let _ = tx.send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
+            };
+            if let Ok(data) = updated_entry.serialize(py) {
+                let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
+                self.send_tti_msg(WorkerMsg::Update(key.to_string(), data, ttl));
+            }
+        } else {
+            self.send_tti_msg(WorkerMsg::Touch(key.to_string(), self.default_ttl));
         }
 
         Ok(Some(entry.value.clone_ref(py)))
@@ -345,10 +353,12 @@ impl Core {
 
     fn invalidate(&self, py: Python, tag: &str) -> PyResult<()> {
         validate_tag(tag)?;
-        py.detach(|| {
-            let new_ver = self.trie.invalidate(tag);
+        let new_ver = self.trie.invalidate(tag);
+        if self.bus_is_remote {
+            py.detach(|| self.bus.publish(tag, new_ver));
+        } else {
             self.bus.publish(tag, new_ver);
-        });
+        }
         Ok(())
     }
 
@@ -363,9 +373,7 @@ impl Core {
     }
 
     fn request_prune(&self, max_age_secs: u64) {
-        if let Some(tx) = &self.tti_tx {
-            let _ = tx.send(WorkerMsg::Prune(max_age_secs));
-        }
+        self.send_tti_msg(WorkerMsg::Prune(max_age_secs));
     }
 
     fn prune(&self, max_age_secs: u64) {
@@ -382,6 +390,20 @@ impl Core {
 
     fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
+    }
+
+    fn tti_dropped_messages(&self) -> u64 {
+        self.dropped_tti_msgs.load(Ordering::Relaxed)
+    }
+}
+
+impl Core {
+    fn send_tti_msg(&self, msg: WorkerMsg) {
+        if let Some(Err(mpsc::TrySendError::Full(_))) =
+            self.tti_tx.as_ref().map(|tx| tx.try_send(msg))
+        {
+            self.dropped_tti_msgs.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

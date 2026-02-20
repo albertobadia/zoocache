@@ -1,5 +1,7 @@
 import time
+
 import pytest
+
 from zoocache import cacheable, configure, reset
 
 
@@ -68,8 +70,8 @@ def test_tti_refresh():
 @pytest.mark.parametrize("storage_url", [None, "lmdb://./test_ttl_lmdb"])
 def test_all_storages_ttl(storage_url):
     reset()
-    import shutil
     import os
+    import shutil
 
     if storage_url and storage_url.startswith("lmdb://"):
         path = storage_url[7:]
@@ -94,6 +96,19 @@ def test_tti_flush_secs_initialization():
     try:
         configure(tti_flush_secs=1)
         # Access core to trigger initialization
+        from zoocache.core import _manager
+
+        core = _manager.get_core()
+        assert core.version() is not None
+    finally:
+        reset()
+
+
+def test_auto_prune_initialization():
+    # Verify that the new auto-prune parameters are accepted and don't crash
+    reset()
+    try:
+        configure(auto_prune_secs=100, auto_prune_interval=60)
         from zoocache.core import _manager
 
         core = _manager.get_core()

@@ -83,7 +83,9 @@ configure(
     prefix="myapp",                          # Namespace isolation
     default_ttl=3600,                        # Safety TTL: 1 hour
     read_extend_ttl=True,                    # TTI mode (reset on read)
-    prune_after=86400,                       # Prune unused tags after 24h
+    auto_prune_secs=3600,                    # Background prune nodes older than 1h
+    auto_prune_interval=600,                 # Run background prune every 10 min
+    lru_update_interval=30,                  # Debounce LRU updates (sees below)
 )
 ```
 
@@ -96,7 +98,10 @@ configure(
 | `prefix` | `str` | `None` | Namespace prefix for keys and channels |
 | `default_ttl` | `int` | `None` | Default TTL/TTI in seconds |
 | `read_extend_ttl` | `bool` | `True` | If `True`, reading extends TTL (TTI mode) |
-| `prune_after` | `int` | `None` | Auto-prune trie nodes unused for X seconds |
+| `auto_prune_secs` | `int` | `3600` | Age (secs) for background pruning |
+| `auto_prune_interval` | `int` | `3600` | Interval (secs) for background pruning worker |
+| `lru_update_interval`| `int` | `30` | Min seconds between LRU updates per key |
+| `prune_after` | `int` | `None` | Reactive prune every 1000 ops (age in secs) |
 
 ---
 
@@ -387,8 +392,10 @@ print(core.tag_version("user:42"))  # Check current version
 
 **Solution**:
 ```python
-configure(prune_after=3600)  # Enable auto-prune
-
+configure(auto_prune_secs=3600, auto_prune_interval=600)  # Enable background prune
+# Or reactively every 1000 ops
+configure(prune_after=3600)
+```
 # Or manually
 from zoocache import prune
 prune(3600)

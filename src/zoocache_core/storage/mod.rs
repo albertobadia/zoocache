@@ -50,7 +50,6 @@ impl CacheEntry {
         let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
         let compressed = compress_prepend_size(&packed);
 
-        // Prepend Magic Header
         let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
         final_data.extend_from_slice(MAGIC_HEADER);
         final_data.extend_from_slice(&compressed);
@@ -85,7 +84,7 @@ impl CacheEntry {
 }
 
 pub(crate) enum StorageResult {
-    Hit(Arc<CacheEntry>),
+    Hit(Arc<CacheEntry>, Option<u64>), // Entry, expires_at (absolute timestamp)
     Expired,
     NotFound,
 }
@@ -93,6 +92,10 @@ pub(crate) enum StorageResult {
 pub(crate) trait Storage: Send + Sync {
     fn get(&self, key: &str) -> StorageResult;
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
+    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        let entry = Python::attach(|py| CacheEntry::deserialize(py, &data))?;
+        self.set(key, Arc::new(entry), ttl)
+    }
     fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
     fn remove(&self, key: &str) -> PyResult<()>;
     fn clear(&self) -> PyResult<()>;

@@ -1,16 +1,16 @@
-from .core import (
-    configure,
+from zoocache._zoocache import InvalidTag
+from zoocache.context import add_deps
+from zoocache.core import (
     cacheable,
+    clear,
+    configure,
+    get_cache as get,
     invalidate,
     prune,
-    clear,
-    version,
     reset,
-    get_cache as get,
     set_cache as set,
+    version,
 )
-from ._zoocache import InvalidTag
-from .context import add_deps
 
 __all__ = [
     "configure",
