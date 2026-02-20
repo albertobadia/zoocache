@@ -10,19 +10,27 @@ use super::{CacheEntry, Storage};
 pub(crate) struct RedisStorage {
     pool: Pool<Client>,
     prefix: String,
+    lru_interval: u64,
 }
 
 const GET_AND_TOUCH_SCRIPT: &str = r#"
     local val = redis.call('GET', KEYS[1])
-    local ttl = redis.call('PTTL', KEYS[1])
+    local pttl = redis.call('PTTL', KEYS[1])
     if val then
-        redis.call('ZADD', KEYS[2], ARGV[1], ARGV[2])
+        local current_score = redis.call('ZSCORE', KEYS[2], ARGV[2])
+        if not current_score or (tonumber(ARGV[1]) - tonumber(current_score) >= tonumber(ARGV[3])) then
+            redis.call('ZADD', KEYS[2], ARGV[1], ARGV[2])
+        end
     end
-    return {val, ttl}
+    return {val, pttl}
 "#;
 
 impl RedisStorage {
-    pub fn new(url: &str, prefix: Option<&str>) -> Result<Self, redis::RedisError> {
+    pub fn new(
+        url: &str,
+        prefix: Option<&str>,
+        lru_interval: u64,
+    ) -> Result<Self, redis::RedisError> {
         let client = Client::open(url)?;
         let pool = Pool::builder()
             .build(client)
@@ -31,6 +39,7 @@ impl RedisStorage {
         Ok(Self {
             pool,
             prefix: prefix.unwrap_or("zoocache").to_string(),
+            lru_interval,
         })
     }
 
@@ -50,7 +59,7 @@ impl Storage for RedisStorage {
             Err(_) => return super::StorageResult::NotFound,
         };
 
-        // Atomic GET + LRU update using Lua
+        // Atomic GET + Conditional LRU update using Lua
         let now = now_secs() as f64;
         let script = redis::Script::new(GET_AND_TOUCH_SCRIPT);
         let (data, pttl): (Vec<u8>, i64) = match script
@@ -58,6 +67,7 @@ impl Storage for RedisStorage {
             .key(self.lru_key())
             .arg(now)
             .arg(key)
+            .arg(self.lru_interval)
             .invoke(&mut conn)
         {
             Ok(res) => res,

@@ -27,7 +27,7 @@ class CacheManager:
 
     def get_core(self) -> Core:
         if self.core is None:
-            exclude = ("prune_after", "flight_timeout", "tti_flush_secs")
+            exclude = ("prune_after", "flight_timeout", "tti_flush_secs", "redis_lru_interval")
             core_args = {k: v for k, v in self.config.items() if k not in exclude}
 
             if timeout := self.config.get("flight_timeout"):
@@ -38,6 +38,8 @@ class CacheManager:
                 core_args["auto_prune_secs"] = auto_prune_secs
             if auto_prune_interval := self.config.get("auto_prune_interval"):
                 core_args["auto_prune_interval"] = auto_prune_interval
+            if redis_lru_interval := self.config.get("redis_lru_interval"):
+                core_args["redis_lru_interval"] = redis_lru_interval
 
             self.core = Core(**core_args)
         return self.core
@@ -73,6 +75,7 @@ def configure(
     tti_flush_secs: int = 30,
     auto_prune_secs: int | None = None,
     auto_prune_interval: int | None = None,
+    redis_lru_interval: int = 30,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -87,6 +90,7 @@ def configure(
         tti_flush_secs=tti_flush_secs,
         auto_prune_secs=auto_prune_secs,
         auto_prune_interval=auto_prune_interval,
+        redis_lru_interval=redis_lru_interval,
     )
 
 

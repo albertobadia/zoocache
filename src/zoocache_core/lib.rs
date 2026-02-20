@@ -72,7 +72,7 @@ struct Core {
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600))]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, redis_lru_interval=30))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -85,10 +85,11 @@ impl Core {
         tti_flush_secs: Option<u64>,
         auto_prune_secs: Option<u64>,
         auto_prune_interval: Option<u64>,
+        redis_lru_interval: u64,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
-                Arc::new(RedisStorage::new(url, prefix).map_err(to_conn_err)?)
+                Arc::new(RedisStorage::new(url, prefix, redis_lru_interval).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
                 Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size).map_err(to_runtime_err)?)
