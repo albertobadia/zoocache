@@ -125,8 +125,9 @@ impl Core {
             Some(url) => {
                 bus_is_remote = true;
                 let channel = prefix.map(|p| format!("{}:invalidate", p));
-                let r_bus =
-                    Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(to_conn_err)?);
+                let r_bus = Arc::new(
+                    RedisPubSubBus::new(url, channel.as_deref(), prefix).map_err(to_conn_err)?,
+                );
 
                 let t_clone = trie.clone();
                 r_bus.start_listener(move |tag, ver| {
@@ -144,6 +145,7 @@ impl Core {
             let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
             let storage_worker = Arc::clone(&storage);
             let trie_worker = trie.clone();
+            let bus_worker = Arc::clone(&bus);
 
             thread::spawn(move || {
                 let mut last_touches =
@@ -155,14 +157,15 @@ impl Core {
                 let prune_interval = Duration::from_secs(auto_prune_interval.unwrap_or(3600));
                 let prune_age = auto_prune_secs.unwrap_or(3600);
 
-                while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
-                    if e == mpsc::RecvTimeoutError::Timeout {
-                        Ok(WorkerMsg::Touch(String::new(), None))
-                    } else {
-                        Err(e)
-                    }
-                }) {
+                loop {
+                    let msg_result = rx.recv_timeout(Duration::from_secs(1));
                     let now = Instant::now();
+                    let msg = match msg_result {
+                        Ok(m) => m,
+                        Err(mpsc::RecvTimeoutError::Timeout) => WorkerMsg::Touch(String::new(), None),
+                        Err(_) => break,
+                    };
+
                     match msg {
                         WorkerMsg::Touch(key, ttl) => {
                             if !key.is_empty() {
@@ -186,7 +189,8 @@ impl Core {
                             let _ = storage_worker.set_raw(key, data, ttl);
                         }
                         WorkerMsg::FlushMetrics(metrics) => {
-                            let _ = storage_worker.flush_metrics(metrics);
+                            let _ = storage_worker.flush_metrics(metrics.clone());
+                            let _ = bus_worker.flush_metrics(metrics);
                         }
                     }
 

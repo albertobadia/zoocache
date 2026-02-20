@@ -8,10 +8,15 @@ use super::InvalidateBus;
 pub(crate) struct RedisPubSubBus {
     pool: Pool<Client>,
     channel: String,
+    prefix: String,
 }
 
 impl RedisPubSubBus {
-    pub fn new(url: &str, channel: Option<&str>) -> Result<Self, redis::RedisError> {
+    pub fn new(
+        url: &str,
+        channel: Option<&str>,
+        prefix: Option<&str>,
+    ) -> Result<Self, redis::RedisError> {
         let client = Client::open(url)?;
         let pool = Pool::builder()
             .build(client)
@@ -20,6 +25,7 @@ impl RedisPubSubBus {
         Ok(Self {
             pool,
             channel: channel.unwrap_or("zoocache:invalidate").to_string(),
+            prefix: prefix.unwrap_or("zoocache").to_string(),
         })
     }
 
@@ -61,11 +67,14 @@ impl RedisPubSubBus {
                 backoff_ms = 100; // Reset on success
 
                 while let Ok(msg) = pubsub.get_message() {
-                    if let Ok(payload) = msg.get_payload::<String>()
-                        && let Some((tag, ver_str)) = payload.rsplit_once('|')
-                        && let Ok(ver) = ver_str.parse::<u64>()
-                    {
-                        callback(tag, ver);
+                    let Ok(payload) = msg.get_payload::<String>() else {
+                        continue;
+                    };
+
+                    if let Some((tag, ver_str)) = payload.rsplit_once('|') {
+                        if let Ok(ver) = ver_str.parse::<u64>() {
+                            callback(tag, ver);
+                        }
                     }
                 }
 
@@ -81,5 +90,19 @@ impl InvalidateBus for RedisPubSubBus {
             let payload = format!("{}|{}", tag, version);
             let _: Result<(), _> = conn.publish(&self.channel, payload);
         }
+    }
+
+    fn flush_metrics(&self, metrics: std::collections::HashMap<String, f64>) -> pyo3::PyResult<()> {
+        use crate::utils::to_conn_err;
+        let mut conn = self.pool.get().map_err(to_conn_err)?;
+        let mut pipe = redis::pipe();
+
+        for (key, value) in metrics {
+            let redis_key = format!("{}:metrics:{}", self.prefix, key);
+            pipe.cmd("INCRBYFLOAT").arg(redis_key).arg(value);
+        }
+
+        let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
+        Ok(())
     }
 }

@@ -51,17 +51,22 @@ class RedisTelemetryAdapter(TelemetryAdapter):
         label_str = "_".join(f"{v}" for k, v in sorted(labels.items()))
         return f"{name}_{label_str}"
 
+    def _trigger_flush(self) -> None:
+        try:
+            asyncio.get_running_loop()
+            self._start_flush_task()
+        except RuntimeError:
+            self._flush()
+
     def increment(self, name: str, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
-        self._start_flush_task()
         metric_name = self._build_metric_name(name, labels)
         self._counters[metric_name] += value
+        self._trigger_flush()
 
     def observe(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
-        self._start_flush_task()
-        metric_name = self._build_metric_name(f"{name}_sum", labels)
-        count_name = self._build_metric_name(f"{name}_count", labels)
-        self._counters[metric_name] += value
-        self._counters[count_name] += 1.0
+        self._counters[self._build_metric_name(f"{name}_sum", labels)] += value
+        self._counters[self._build_metric_name(f"{name}_count", labels)] += 1.0
+        self._trigger_flush()
 
     def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         pass
