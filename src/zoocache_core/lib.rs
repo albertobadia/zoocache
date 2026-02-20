@@ -121,7 +121,7 @@ impl Core {
         };
 
         let mut tti_tx = None;
-        let tti_flush_secs_val = tti_flush_secs.unwrap_or(30); // Use a local variable for the value
+        let tti_flush_secs_val = tti_flush_secs.unwrap_or(30);
 
         if read_extend_ttl {
             let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
@@ -134,7 +134,7 @@ impl Core {
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
                 let mut last_auto_prune = Instant::now();
-                let flush_duration = Duration::from_secs(tti_flush_secs_val); // Use the local variable
+                let flush_duration = Duration::from_secs(tti_flush_secs_val);
                 let prune_interval = Duration::from_secs(auto_prune_interval.unwrap_or(3600));
                 let prune_age = auto_prune_secs.unwrap_or(3600);
 

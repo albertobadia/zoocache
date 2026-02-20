@@ -50,7 +50,6 @@ impl CacheEntry {
         let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
         let compressed = compress_prepend_size(&packed);
 
-        // Prepend Magic Header
         let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
         final_data.extend_from_slice(MAGIC_HEADER);
         final_data.extend_from_slice(&compressed);

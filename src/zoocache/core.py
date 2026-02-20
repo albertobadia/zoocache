@@ -34,7 +34,7 @@ class CacheManager:
 
     def get_core(self) -> Core:
         if self.core is None:
-            # prune_after is handled by the manager, not the Rust core
+            # Handle prune_after at manager level
             core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
             self.core = Core(**core_args)
         return self.core
@@ -48,7 +48,6 @@ class CacheManager:
                 core = self.get_core()
                 core.request_prune(age)
 
-            # Report TTI saturation to telemetry
             if self.core:
                 current_dropped = self.core.tti_dropped_messages()
                 if current_dropped > self._last_tti_dropped:
@@ -200,21 +199,20 @@ def cacheable(
                     if fut is not None:
                         return await _wait_for_leader(fut)
                     await sig.wait()
-                finally:
-                    _resolve_flight_signals(key)
+                except BaseException:
+                    # Let the leader handle signal resolution on failure
+                    raise
 
             leader_fut = asyncio.get_running_loop().create_future()
-            try:
-                core.register_flight_future(key, leader_fut)
-            finally:
-                _resolve_flight_signals(key)
+            core.register_flight_future(key, leader_fut)
 
+            success = False
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
                     with _manager.telemetry.time_operation("cache_set_duration_seconds"):
                         core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
-                core.finish_flight(key, False, res)
+                success = True
                 if not leader_fut.done():
                     leader_fut.set_result(res)
                 return res
@@ -224,7 +222,7 @@ def cacheable(
                     leader_fut.set_exception(e)
                 raise
             finally:
-                core.finish_flight(key, True, None)
+                core.finish_flight(key, not success, res if success else None)
                 _resolve_flight_signals(key)
 
         @functools.wraps(fn)
@@ -241,18 +239,20 @@ def cacheable(
             if not is_leader:
                 return fn(*args, **kwargs)  # Bypass to avoid returning None if leader active
 
+            success = False
+            res = None
             try:
                 with DepsTracker():
                     res = fn(*args, **kwargs)
                     with _manager.telemetry.time_operation("cache_set_duration_seconds"):
                         core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
-                core.finish_flight(key, False, res)
+                success = True
                 return res
             except BaseException:
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 raise
             finally:
-                core.finish_flight(key, True, None)
+                core.finish_flight(key, not success, res if success else None)
                 _resolve_flight_signals(key)
 
         return async_wrapper if inspect.iscoroutinefunction(fn) else sync_wrapper

@@ -59,7 +59,6 @@ impl Storage for RedisStorage {
             Err(_) => return super::StorageResult::NotFound,
         };
 
-        // Atomic GET + Conditional LRU update using Lua
         let now = now_secs() as f64;
         let script = redis::Script::new(GET_AND_TOUCH_SCRIPT);
         let (data, pttl): (Vec<u8>, i64) = match script
@@ -89,8 +88,6 @@ impl Storage for RedisStorage {
                 super::StorageResult::Hit(entry, expires_at)
             }
             None => {
-                // If we have data but deserialization failed, it's corrupted.
-                // We should remove it to keep the storage clean.
                 let _: () = redis::pipe()
                     .del(self.full_key(key))
                     .zrem(self.lru_key(), key)
