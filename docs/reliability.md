@@ -23,8 +23,9 @@ Every unique dependency tag (`org:1`, `user:42`) creates a node in the internal 
 ### The Protection: Automatic Pruning
 Zoocache implements a garbage collection mechanism for the Trie:
 - **Last Accessed Tracking**: Every time a tag is validated or invalidated, its node (and its parents) are "touched" with the current timestamp.
-- **Pruning**: You can configure a `prune_after` interval. A background-safe operation (`prune`) traverses the tree and removes nodes that haven't been accessed for a long time and have no children.
-- **Trigger**: By default, Zoocache checks for pruning every 1000 operations (configurable).
+- **Background Worker (Proactive)**: A dedicated thread sweeps the Trie periodically. Configured via `auto_prune_secs` (age) and `auto_prune_interval` (frequency).
+- **Reactive Trigger**: If `prune_after` is set, Zoocache checks for pruning every 1000 operations.
+- **Eviction-triggered**: When storage limit is reached and LRU eviction occurs, a full prune (`age=0`) is automatically triggered to immediately reclaim space.
 
 ## 3. Storage Performance (TTI De-bouncing)
 

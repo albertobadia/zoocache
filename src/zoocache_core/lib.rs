@@ -71,7 +71,7 @@ struct Core {
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30))]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -82,6 +82,8 @@ impl Core {
         lmdb_map_size: Option<usize>,
         flight_timeout: Option<u64>,
         tti_flush_secs: Option<u64>,
+        auto_prune_secs: Option<u64>,
+        auto_prune_interval: Option<u64>,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
@@ -131,7 +133,8 @@ impl Core {
                 let mut last_flush = Instant::now();
                 let mut last_auto_prune = Instant::now();
                 let flush_duration = Duration::from_secs(tti_flush_secs);
-                let prune_interval = Duration::from_secs(3600); // 1 hour
+                let prune_interval = Duration::from_secs(auto_prune_interval.unwrap_or(3600));
+                let prune_age = auto_prune_secs.unwrap_or(3600);
 
                 while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
                     if e == mpsc::RecvTimeoutError::Timeout {
@@ -169,7 +172,7 @@ impl Core {
                     }
 
                     if now.duration_since(last_auto_prune) > prune_interval {
-                        trie_worker.prune(3600);
+                        trie_worker.prune(prune_age);
                         last_auto_prune = now;
                     }
                 }

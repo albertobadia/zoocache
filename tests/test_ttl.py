@@ -100,3 +100,16 @@ def test_tti_flush_secs_initialization():
         assert core.version() is not None
     finally:
         reset()
+
+
+def test_auto_prune_initialization():
+    # Verify that the new auto-prune parameters are accepted and don't crash
+    reset()
+    try:
+        configure(auto_prune_secs=100, auto_prune_interval=60)
+        from zoocache.core import _manager
+
+        core = _manager.get_core()
+        assert core.version() is not None
+    finally:
+        reset()

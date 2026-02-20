@@ -35,6 +35,10 @@ class CacheManager:
                 core_args["flight_timeout"] = timeout
             if tti_flush := self.config.get("tti_flush_secs"):
                 core_args["tti_flush_secs"] = tti_flush
+            if auto_prune_secs := self.config.get("auto_prune_secs"):
+                core_args["auto_prune_secs"] = auto_prune_secs
+            if auto_prune_interval := self.config.get("auto_prune_interval"):
+                core_args["auto_prune_interval"] = auto_prune_interval
 
             self.core = Core(**core_args)
         return self.core
@@ -68,6 +72,8 @@ def configure(
     lmdb_map_size: Optional[int] = None,
     flight_timeout: int = 60,
     tti_flush_secs: int = 30,
+    auto_prune_secs: Optional[int] = None,
+    auto_prune_interval: Optional[int] = None,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -80,6 +86,8 @@ def configure(
         lmdb_map_size=lmdb_map_size,
         flight_timeout=flight_timeout,
         tti_flush_secs=tti_flush_secs,
+        auto_prune_secs=auto_prune_secs,
+        auto_prune_interval=auto_prune_interval,
     )
 
 
