@@ -71,10 +71,10 @@ impl RedisPubSubBus {
                         continue;
                     };
 
-                    if let Some((tag, ver_str)) = payload.rsplit_once('|') {
-                        if let Ok(ver) = ver_str.parse::<u64>() {
-                            callback(tag, ver);
-                        }
+                    if let Some((tag, ver_str)) = payload.rsplit_once('|')
+                        && let Ok(ver) = ver_str.parse::<u64>()
+                    {
+                        callback(tag, ver);
                     }
                 }
 

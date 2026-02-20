@@ -162,7 +162,9 @@ impl Core {
                     let now = Instant::now();
                     let msg = match msg_result {
                         Ok(m) => m,
-                        Err(mpsc::RecvTimeoutError::Timeout) => WorkerMsg::Touch(String::new(), None),
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            WorkerMsg::Touch(String::new(), None)
+                        }
                         Err(_) => break,
                     };
 
