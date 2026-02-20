@@ -51,6 +51,7 @@ enum WorkerMsg {
     Touch(String, Option<u64>),
     Prune(u64),
     Delete(String),
+    Update(String, Vec<u8>, Option<u64>),
 }
 
 #[pyclass]
@@ -162,6 +163,9 @@ impl Core {
                         WorkerMsg::Delete(key) => {
                             let _ = storage_worker.remove(&key);
                         }
+                        WorkerMsg::Update(key, data, ttl) => {
+                            let _ = storage_worker.set_raw(key, data, ttl);
+                        }
                     }
 
                     if (batch.len() >= 1000 || now.duration_since(last_flush) > flush_duration)
@@ -265,8 +269,8 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let status = py.detach(|| storage.get(key));
 
-        let entry = match status {
-            storage::StorageResult::Hit(e) => e,
+        let (entry, expires_at) = match status {
+            storage::StorageResult::Hit(e, exp) => (e, exp),
             storage::StorageResult::Expired => {
                 if let Some(tx) = &self.tti_tx {
                     let _ = tx.try_send(WorkerMsg::Delete(key.to_string()));
@@ -290,7 +294,20 @@ impl Core {
         }
 
         if let Some(tx) = &self.tti_tx {
-            let _ = tx.try_send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
+            let current_global_version = self.trie.get_global_version();
+            if entry.trie_version < current_global_version {
+                let updated_entry = storage::CacheEntry {
+                    value: entry.value.clone_ref(py),
+                    dependencies: entry.dependencies.clone(),
+                    trie_version: current_global_version,
+                };
+                if let Ok(data) = updated_entry.serialize(py) {
+                    let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
+                    let _ = tx.try_send(WorkerMsg::Update(key.to_string(), data, ttl));
+                }
+            } else {
+                let _ = tx.try_send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
+            }
         }
 
         Ok(Some(entry.value.clone_ref(py)))

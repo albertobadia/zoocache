@@ -85,7 +85,7 @@ impl CacheEntry {
 }
 
 pub(crate) enum StorageResult {
-    Hit(Arc<CacheEntry>),
+    Hit(Arc<CacheEntry>, Option<u64>), // Entry, expires_at (absolute timestamp)
     Expired,
     NotFound,
 }
@@ -93,6 +93,10 @@ pub(crate) enum StorageResult {
 pub(crate) trait Storage: Send + Sync {
     fn get(&self, key: &str) -> StorageResult;
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
+    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        let entry = Python::attach(|py| CacheEntry::deserialize(py, &data))?;
+        self.set(key, Arc::new(entry), ttl)
+    }
     fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
     fn remove(&self, key: &str) -> PyResult<()>;
     fn clear(&self) -> PyResult<()>;
