@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::utils::{to_conn_err, to_runtime_err};
+use crate::utils::to_conn_err;
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::num::NonZeroUsize;
@@ -22,6 +22,7 @@ use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
 
 pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
+pyo3::create_exception!(zoocache, StorageIsFull, pyo3::exceptions::PyException);
 
 fn validate_tag(tag: &str) -> PyResult<()> {
     if tag.is_empty() {
@@ -93,7 +94,7 @@ impl Core {
                 Arc::new(RedisStorage::new(url, prefix, lru_update_interval).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
-                Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size).map_err(to_runtime_err)?)
+                Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size)?)
             }
             Some(url) => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -441,5 +442,6 @@ fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Core>()?;
     m.add_function(wrap_pyfunction!(hash_key, m)?)?;
     m.add("InvalidTag", m.py().get_type::<InvalidTag>())?;
+    m.add("StorageIsFull", m.py().get_type::<StorageIsFull>())?;
     Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::StorageIsFull;
 use crate::storage::{CacheEntry, Storage};
 use crate::utils::{now_nanos, now_secs, to_runtime_err};
 use lmdb::{Cursor, Database, DatabaseFlags, Environment, Transaction, WriteFlags};
@@ -30,23 +31,23 @@ impl LmdbStorage {
             .set_max_dbs(5)
             .set_map_size(map_size)
             .open(path)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            .map_err(Self::to_storage_is_full_err)?;
 
         let db_main = env
             .create_db(Some("main"), DatabaseFlags::empty())
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         let db_ttls = env
             .create_db(Some("ttls"), DatabaseFlags::empty())
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         let db_lru = env
             .create_db(Some("lru"), DatabaseFlags::empty())
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         let db_lru_index = env
             .create_db(Some("lru_index"), DatabaseFlags::empty())
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         let db_meta = env
             .create_db(Some("meta"), DatabaseFlags::empty())
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
 
         let count = (|| {
             let txn = env.begin_ro_txn().ok()?;
@@ -97,6 +98,18 @@ impl LmdbStorage {
             false
         }
     }
+
+    fn to_storage_is_full_err<E: std::fmt::Display>(e: E) -> PyErr {
+        let msg = e.to_string();
+        if msg.contains("MDB_MAP_FULL") || msg.contains("MAP_FULL") {
+            StorageIsFull::new_err(format!(
+                "LMDB storage is full (map_size reached). Increase 'lmdb_map_size' in configuration. Error: {}",
+                msg
+            ))
+        } else {
+            to_runtime_err(e)
+        }
+    }
 }
 
 impl Storage for LmdbStorage {
@@ -139,21 +152,21 @@ impl Storage for LmdbStorage {
         let new_ts = now_nanos();
 
         txn.put(self.db_main, &key, &data, WriteFlags::empty())
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         txn.put(
             self.db_lru,
             &key,
             &new_ts.to_le_bytes(),
             WriteFlags::empty(),
         )
-        .map_err(to_runtime_err)?;
+        .map_err(Self::to_storage_is_full_err)?;
         txn.put(
             self.db_lru_index,
             &Self::make_index_key(new_ts, &key),
             &[],
             WriteFlags::empty(),
         )
-        .map_err(to_runtime_err)?;
+        .map_err(Self::to_storage_is_full_err)?;
 
         if let Some(t) = ttl {
             let expire_at = now_secs() + t;
@@ -163,7 +176,7 @@ impl Storage for LmdbStorage {
                 &expire_at.to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         } else {
             let _ = txn.del(self.db_ttls, &key, None);
         }
@@ -177,10 +190,10 @@ impl Storage for LmdbStorage {
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         }
 
-        txn.commit().map_err(to_runtime_err)?;
+        txn.commit().map_err(Self::to_storage_is_full_err)?;
 
         if is_new {
             self.count.fetch_add(1, Ordering::SeqCst);
@@ -196,21 +209,21 @@ impl Storage for LmdbStorage {
         let new_ts = now_nanos();
 
         txn.put(self.db_main, &key, &data, WriteFlags::empty())
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         txn.put(
             self.db_lru,
             &key,
             &new_ts.to_le_bytes(),
             WriteFlags::empty(),
         )
-        .map_err(to_runtime_err)?;
+        .map_err(Self::to_storage_is_full_err)?;
         txn.put(
             self.db_lru_index,
             &Self::make_index_key(new_ts, &key),
             &[],
             WriteFlags::empty(),
         )
-        .map_err(to_runtime_err)?;
+        .map_err(Self::to_storage_is_full_err)?;
 
         if let Some(t) = ttl {
             let expire_at = now_secs() + t;
@@ -220,7 +233,7 @@ impl Storage for LmdbStorage {
                 &expire_at.to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         } else {
             let _ = txn.del(self.db_ttls, &key, None);
         }
@@ -234,10 +247,10 @@ impl Storage for LmdbStorage {
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
         }
 
-        txn.commit().map_err(to_runtime_err)?;
+        txn.commit().map_err(Self::to_storage_is_full_err)?;
 
         if is_new {
             self.count.fetch_add(1, Ordering::SeqCst);
@@ -254,14 +267,14 @@ impl Storage for LmdbStorage {
             self.delete_from_index(&mut txn, &key);
 
             txn.put(self.db_lru, &key, &now_le, WriteFlags::empty())
-                .map_err(to_runtime_err)?;
+                .map_err(Self::to_storage_is_full_err)?;
             txn.put(
                 self.db_lru_index,
                 &Self::make_index_key(now_n, &key),
                 &[],
                 WriteFlags::empty(),
             )
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
 
             if let Some(t) = ttl {
                 let expire_at = now_s + t;
@@ -271,10 +284,10 @@ impl Storage for LmdbStorage {
                     &expire_at.to_le_bytes(),
                     WriteFlags::empty(),
                 )
-                .map_err(to_runtime_err)?;
+                .map_err(Self::to_storage_is_full_err)?;
             }
         }
-        txn.commit().map_err(to_runtime_err)
+        txn.commit().map_err(Self::to_storage_is_full_err)
     }
 
     fn remove(&self, key: &str) -> PyResult<()> {
@@ -288,9 +301,9 @@ impl Storage for LmdbStorage {
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
             )
-            .map_err(to_runtime_err)?;
+            .map_err(Self::to_storage_is_full_err)?;
 
-            txn.commit().map_err(to_runtime_err)?;
+            txn.commit().map_err(Self::to_storage_is_full_err)?;
             self.count.fetch_sub(1, Ordering::SeqCst);
         }
         Ok(())
@@ -303,7 +316,7 @@ impl Storage for LmdbStorage {
         let _ = txn.clear_db(self.db_lru);
         let _ = txn.clear_db(self.db_lru_index);
         let _ = txn.clear_db(self.db_meta);
-        txn.commit().map_err(to_runtime_err)?;
+        txn.commit().map_err(Self::to_storage_is_full_err)?;
         self.count.store(0, Ordering::SeqCst);
         Ok(())
     }
@@ -342,9 +355,9 @@ impl Storage for LmdbStorage {
             &(new_count as u64).to_le_bytes(),
             WriteFlags::empty(),
         )
-        .map_err(to_runtime_err)?;
+        .map_err(Self::to_storage_is_full_err)?;
 
-        txn.commit().map_err(to_runtime_err)?;
+        txn.commit().map_err(Self::to_storage_is_full_err)?;
         self.count.fetch_sub(evicted_count, Ordering::SeqCst);
 
         Ok(to_evict)
