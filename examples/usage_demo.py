@@ -7,7 +7,8 @@ This script demonstrates the core features:
 """
 
 import time
-from zoocache import cacheable, invalidate, add_deps
+
+from zoocache import add_deps, cacheable, invalidate
 
 
 # --- 1. Basic Caching ---

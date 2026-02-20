@@ -1,8 +1,9 @@
 import multiprocessing
-import time
 import os
 import shutil
-from zoocache import configure, cacheable, invalidate, clear
+import time
+
+from zoocache import cacheable, clear, configure, invalidate
 
 # Shared LMDB path
 DB_PATH = "./test_lmdb_path"

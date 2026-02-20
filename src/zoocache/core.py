@@ -1,30 +1,27 @@
-import functools
 import asyncio
+import functools
 import inspect
-from typing import Any, Callable, Optional, Dict, Union, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
+
 from ._zoocache import Core, hash_key
 from .context import DepsTracker, get_current_deps
-
 
 PRUNE_CHECK_INTERVAL = 1000
 
 
 class CacheManager:
     def __init__(self):
-        self.core: Optional[Core] = None
-        self.config: Dict[str, Any] = {}
+        self.core: Core | None = None
+        self.config: dict[str, Any] = {}
         self._op_count: int = 0
-        self._flight_signals: Dict[
-            str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]
-        ] = {}
+        self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
 
     def is_configured(self) -> bool:
         return self.core is not None or bool(self.config)
 
     def configure(self, **kwargs) -> None:
-        if self.is_configured() and any(
-            self.config.get(k) != v for k, v in kwargs.items()
-        ):
+        if self.is_configured() and any(self.config.get(k) != v for k, v in kwargs.items()):
             raise RuntimeError("zoocache already initialized with different settings")
         self.config = kwargs
 
@@ -64,18 +61,18 @@ _manager = CacheManager()
 
 
 def configure(
-    storage_url: Optional[str] = None,
-    bus_url: Optional[str] = None,
-    prefix: Optional[str] = None,
-    prune_after: Optional[int] = None,
-    default_ttl: Optional[int] = None,
+    storage_url: str | None = None,
+    bus_url: str | None = None,
+    prefix: str | None = None,
+    prune_after: int | None = None,
+    default_ttl: int | None = None,
     read_extend_ttl: bool = True,
-    max_entries: Optional[int] = None,
-    lmdb_map_size: Optional[int] = None,
+    max_entries: int | None = None,
+    lmdb_map_size: int | None = None,
     flight_timeout: int = 60,
     tti_flush_secs: int = 30,
-    auto_prune_secs: Optional[int] = None,
-    auto_prune_interval: Optional[int] = None,
+    auto_prune_secs: int | None = None,
+    auto_prune_interval: int | None = None,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -116,9 +113,7 @@ def _resolve_flight_signals(key: str) -> None:
             evt_loop.call_soon_threadsafe(sig.set)
 
 
-def _generate_key(
-    func: Callable, namespace: Optional[str], args: tuple, kwargs: dict
-) -> str:
+def _generate_key(func: Callable, namespace: str | None, args: tuple, kwargs: dict) -> str:
     obj = (func.__module__, func.__qualname__, args, sorted(kwargs.items()))
     prefix = f"{namespace}:{func.__name__}" if namespace else func.__name__
     try:
@@ -132,20 +127,18 @@ def _generate_key(
         ) from e
 
 
-def _collect_deps(
-    deps: Optional[Union[Callable, Iterable[str]]], args: tuple, kwargs: dict
-) -> list[str]:
+def _collect_deps(deps: Callable | Iterable[str] | None, args: tuple, kwargs: dict) -> list[str]:
     base = list(get_current_deps() or [])
     extra = (deps(*args, **kwargs) if callable(deps) else deps) if deps else []
     return list(set(base + list(extra)))
 
 
 def cacheable(
-    func: Optional[Callable] = None,
+    func: Callable | None = None,
     *,
-    namespace: Optional[str] = None,
-    deps: Optional[Union[Callable, Iterable[str]]] = None,
-    ttl: Optional[int] = None,
+    namespace: str | None = None,
+    deps: Callable | Iterable[str] | None = None,
+    ttl: int | None = None,
 ):
     def decorator(fn: Callable):
         @functools.wraps(fn)
@@ -165,9 +158,7 @@ def cacheable(
                 if fut is not None:
                     timeout = _manager.config.get("flight_timeout", 60)
                     try:
-                        return await asyncio.wait_for(
-                            asyncio.shield(fut), timeout=timeout
-                        )
+                        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
                     except asyncio.TimeoutError:
                         raise RuntimeError("Thundering herd leader failed") from None
 
@@ -232,7 +223,5 @@ def get_cache(key: str) -> Any:
     return _manager.get_core().get(key)
 
 
-def set_cache(
-    key: str, value: Any, deps: Iterable[str] = (), ttl: Optional[int] = None
-) -> None:
+def set_cache(key: str, value: Any, deps: Iterable[str] = (), ttl: int | None = None) -> None:
     _manager.get_core().set(key, value, list(deps), ttl=ttl)

@@ -14,7 +14,8 @@ if not settings.configured:
     )
     django.setup()
 
-from django.db import models, connection
+from django.db import connection, models
+
 from zoocache import configure
 from zoocache.contrib.django import cacheable_serializer
 

@@ -1,6 +1,8 @@
 import os
 import shutil
+
 import pytest
+
 from zoocache import cacheable, configure, reset
 
 DB_PATH = "./bench_lmdb_pytest"

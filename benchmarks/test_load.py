@@ -1,6 +1,8 @@
 import threading
+
 import pytest
-from zoocache import cacheable, invalidate, clear
+
+from zoocache import cacheable, clear, invalidate
 
 
 @pytest.fixture(autouse=True)
@@ -84,9 +86,7 @@ def test_deep_hierarchy_invalidation_root(benchmark):
         clear()
         deep_func()
 
-    benchmark.pedantic(
-        invalidate, args=("level0",), setup=setup, rounds=100, iterations=1
-    )
+    benchmark.pedantic(invalidate, args=("level0",), setup=setup, rounds=100, iterations=1)
 
 
 def test_deep_hierarchy_invalidation_leaf(benchmark):
@@ -103,6 +103,4 @@ def test_deep_hierarchy_invalidation_leaf(benchmark):
         clear()
         deep_func()
 
-    benchmark.pedantic(
-        invalidate, args=(deep_tag,), setup=setup, rounds=100, iterations=1
-    )
+    benchmark.pedantic(invalidate, args=(deep_tag,), setup=setup, rounds=100, iterations=1)

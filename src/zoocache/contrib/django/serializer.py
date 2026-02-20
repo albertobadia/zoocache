@@ -1,11 +1,13 @@
 import functools
 from hashlib import sha256
+
 from zoocache.core import _manager
 
 try:
     from django.db import models
-    from django.db.models.signals import post_save, post_delete, m2m_changed
-    from .util import model_tag, instance_tag
+    from django.db.models.signals import m2m_changed, post_delete, post_save
+
+    from .util import instance_tag, model_tag
 except ImportError:
     models = None
 
@@ -46,9 +48,7 @@ class BaseCacheableSerializerMixin:
             for field in fields.values():
                 if hasattr(field, "_get_related_models"):
                     models_found.update(field._get_related_models())
-                elif hasattr(field, "child") and hasattr(
-                    field.child, "_get_related_models"
-                ):
+                elif hasattr(field, "child") and hasattr(field.child, "_get_related_models"):
                     models_found.update(field.child._get_related_models())
 
                 queryset = getattr(field, "queryset", None)
@@ -72,12 +72,8 @@ class BaseCacheableSerializerMixin:
             core.invalidate(model_tag(sender))
 
         uid = f"zoocache_serializer_{model_tag(model)}"
-        post_save.connect(
-            _invalidate_handler, sender=model, dispatch_uid=uid, weak=False
-        )
-        post_delete.connect(
-            _invalidate_handler, sender=model, dispatch_uid=uid, weak=False
-        )
+        post_save.connect(_invalidate_handler, sender=model, dispatch_uid=uid, weak=False)
+        post_delete.connect(_invalidate_handler, sender=model, dispatch_uid=uid, weak=False)
 
         # M2M signals must be connected to the through model
         for field in model._meta.local_many_to_many:
@@ -126,9 +122,7 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
             return cached
 
         data = super().to_representation(instance)
-        deps = {instance_tag(instance)} | {
-            model_tag(m) for m in self._get_related_models()
-        }
+        deps = {instance_tag(instance)} | {model_tag(m) for m in self._get_related_models()}
         core.set(key, data, list(deps))
         return data
 
@@ -185,9 +179,7 @@ def cacheable_serializer(cls):
                 list_serializer.zoocache_model = getattr(cls, "zoocache_model", None)
                 if hasattr(cls, "Meta") and hasattr(cls.Meta, "model"):
                     if not hasattr(list_serializer, "Meta"):
-                        list_serializer.Meta = type(
-                            "Meta", (), {"model": cls.Meta.model}
-                        )
+                        list_serializer.Meta = type("Meta", (), {"model": cls.Meta.model})
                     elif not hasattr(list_serializer.Meta, "model"):
                         list_serializer.Meta.model = cls.Meta.model
             return list_serializer

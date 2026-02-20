@@ -14,8 +14,9 @@ if not settings.configured:
     )
     django.setup()
 
-from django.db import models, connection
-from zoocache import configure, clear
+from django.db import connection, models
+
+from zoocache import clear, configure
 from zoocache.contrib.django import cacheable_serializer
 
 
@@ -66,9 +67,7 @@ class AuthorDetailSerializer(BaseSerializer):
         print(f"--- [DEBUG] Serializing Author: {instance.name} ---")
         return {
             "name": instance.name,
-            "books": [
-                BookSerializer().to_representation(b) for b in instance.books.all()
-            ],
+            "books": [BookSerializer().to_representation(b) for b in instance.books.all()],
         }
 
 

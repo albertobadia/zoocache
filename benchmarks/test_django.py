@@ -16,8 +16,10 @@ if not settings.configured:
 
 import pytest
 from django.db import connection, models
-from zoocache.contrib.django import ZooCacheManager
+
 import zoocache
+from zoocache.contrib.django import ZooCacheManager
+
 from .utils import simulated_latency
 
 

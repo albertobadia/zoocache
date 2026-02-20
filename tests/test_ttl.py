@@ -1,5 +1,7 @@
 import time
+
 import pytest
+
 from zoocache import cacheable, configure, reset
 
 
@@ -68,8 +70,8 @@ def test_tti_refresh():
 @pytest.mark.parametrize("storage_url", [None, "lmdb://./test_ttl_lmdb"])
 def test_all_storages_ttl(storage_url):
     reset()
-    import shutil
     import os
+    import shutil
 
     if storage_url and storage_url.startswith("lmdb://"):
         path = storage_url[7:]

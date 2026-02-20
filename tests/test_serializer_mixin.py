@@ -14,11 +14,13 @@ if not settings.configured:
     )
     django.setup()
 
-import pytest
 from unittest.mock import MagicMock
-from django.db import models, connection
+
+import pytest
+from django.db import connection, models
+
+from zoocache import clear, configure, get as zoo_get, reset
 from zoocache.contrib.django import cacheable_serializer, instance_tag
-from zoocache import configure, reset, clear, get as zoo_get
 
 
 class Person(models.Model):

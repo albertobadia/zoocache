@@ -1,7 +1,9 @@
-import sqlite3
-import pytest
 import os
-from zoocache import cacheable, invalidate, clear, add_deps
+import sqlite3
+
+import pytest
+
+from zoocache import add_deps, cacheable, clear, invalidate
 
 # Configure for local testing
 DB_PATH = "test_complex.db"
@@ -27,12 +29,8 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE organizations (id INTEGER PRIMARY KEY, name TEXT)")
-    cursor.execute(
-        "CREATE TABLE projects (id INTEGER PRIMARY KEY, org_id INTEGER, name TEXT)"
-    )
-    cursor.execute(
-        "CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, name TEXT)"
-    )
+    cursor.execute("CREATE TABLE projects (id INTEGER PRIMARY KEY, org_id INTEGER, name TEXT)")
+    cursor.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, name TEXT)")
     cursor.execute(
         "CREATE TABLE tasks (id INTEGER PRIMARY KEY, project_id INTEGER, user_id INTEGER, title TEXT, status TEXT)"
     )
@@ -87,9 +85,7 @@ def list_projects(org_id: int):
 @cacheable(deps=lambda project_id: [f"project:{project_id}"])
 def get_project_details(project_id: int):
     conn = get_db()
-    project = conn.execute(
-        "SELECT * FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
+    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     if not project:
         conn.close()
         return None
@@ -97,9 +93,7 @@ def get_project_details(project_id: int):
     # Add dependency to parent org automatically
     add_deps([f"org:{project['org_id']}"])
 
-    tasks = conn.execute(
-        "SELECT * FROM tasks WHERE project_id = ?", (project_id,)
-    ).fetchall()
+    tasks = conn.execute("SELECT * FROM tasks WHERE project_id = ?", (project_id,)).fetchall()
     conn.close()
     return {"project": dict(project), "tasks": [dict(t) for t in tasks]}
 
@@ -180,9 +174,7 @@ def test_sqlite_thundering_herd_stress():
         nonlocal call_count
         call_count += 1
         conn = get_db()
-        res = conn.execute(
-            "SELECT * FROM organizations WHERE id = ?", (org_id,)
-        ).fetchone()
+        res = conn.execute("SELECT * FROM organizations WHERE id = ?", (org_id,)).fetchone()
         conn.close()
         import time
 

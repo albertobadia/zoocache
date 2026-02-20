@@ -27,8 +27,8 @@ settings.configure(
 django.setup()
 
 from django.db import connection, models  # noqa: E402
-from zoocache.contrib.django import ZooCacheManager  # noqa: E402
 
+from zoocache.contrib.django import ZooCacheManager  # noqa: E402
 
 # --- Model Definition ---
 
@@ -162,9 +162,7 @@ def run_demo():
     print("  >> Updated Laptop price (Product.save())")
 
     reviews_after = list(Review.cached.filter(product__name="Laptop"))
-    print(
-        f"  JOIN query after Product save (invalidated!): {len(reviews_after)} reviews"
-    )
+    print(f"  JOIN query after Product save (invalidated!): {len(reviews_after)} reviews")
     print("  The JOIN dependency on Product was detected automatically.")
 
     # Non-JOIN query stays cached

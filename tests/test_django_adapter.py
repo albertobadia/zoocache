@@ -1,7 +1,8 @@
-import django
 import uuid
+from datetime import date, datetime, timezone
 from decimal import Decimal
-from datetime import datetime, date, timezone
+
+import django
 from django.conf import settings
 
 settings.configure(
@@ -16,16 +17,16 @@ settings.configure(
 )
 django.setup()
 
-import pytest  # noqa: E402
 import django.test.utils  # noqa: E402
+import pytest  # noqa: E402
 from django.db import connection, models, transaction  # noqa: E402
 
 import zoocache  # noqa: E402
 from zoocache.contrib.django import (  # noqa: E402
     ZooCacheManager,
+    _get_query_deps,
     _model_to_raw,
     _raw_to_instance,
-    _get_query_deps,
 )
 
 
@@ -650,9 +651,7 @@ class TestDjangoFidelity:
         dec = Decimal("19.99")
         js = {"a": 1, "b": [2, 3]}
 
-        obj = FidelityModel.objects.create(
-            uuid_val=u, decimal_val=dec, datetime_val=dt, date_val=d, json_val=js
-        )
+        obj = FidelityModel.objects.create(uuid_val=u, decimal_val=dec, datetime_val=dt, date_val=d, json_val=js)
 
         # First access to populate cache
         res1 = FidelityModel.cached.get(pk=obj.pk)
@@ -664,9 +663,7 @@ class TestDjangoFidelity:
 
         # Simulate database change that wouldn't be seen if cache is used
         with connection.cursor() as cursor:
-            cursor.execute(
-                f'UPDATE contenttypes_fidelitymodel SET decimal_val = "0.00" WHERE id = {obj.pk}'
-            )
+            cursor.execute(f'UPDATE contenttypes_fidelitymodel SET decimal_val = "0.00" WHERE id = {obj.pk}')
 
         # Second access from cache
         res2 = FidelityModel.cached.get(pk=obj.pk)

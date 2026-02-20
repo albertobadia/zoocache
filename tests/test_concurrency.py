@@ -1,7 +1,9 @@
-import time
 import asyncio
 import threading
+import time
+
 import pytest
+
 from zoocache import cacheable, invalidate
 
 
@@ -127,7 +129,7 @@ async def test_race_condition_protection():
     Verify protection against thundering herd / race conditions.
     Based on the reproduction script logic to ensure single execution per expired key.
     """
-    from zoocache import reset, configure
+    from zoocache import configure, reset
 
     reset()
     configure()
@@ -154,7 +156,7 @@ async def test_async_stress_race_condition():
     Stress test with high concurrency to ensure the race condition fix is robust.
     Based on reproduce_race.py
     """
-    from zoocache import reset, configure, clear
+    from zoocache import clear, configure, reset
 
     reset()
     configure()
@@ -187,7 +189,7 @@ def test_sync_stress_race_condition():
     Stress test for synchronous thundering herd.
     Based on reproduce_race_sync.py
     """
-    from zoocache import reset, configure, clear
+    from zoocache import clear, configure, reset
 
     reset()
     configure()
@@ -219,7 +221,7 @@ def test_sync_stress_race_condition():
 
 @pytest.mark.asyncio
 async def test_flight_timeout_configurable_async():
-    from zoocache import reset, configure
+    from zoocache import configure, reset
 
     # Ensure fresh state
     reset()
@@ -250,7 +252,7 @@ async def test_flight_timeout_configurable_async():
 
 
 def test_flight_timeout_configurable_sync():
-    from zoocache import reset, configure
+    from zoocache import configure, reset
 
     # Ensure fresh state
     reset()
