@@ -14,7 +14,7 @@ use crate::utils::{to_conn_err, to_runtime_err};
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::num::NonZeroUsize;
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
@@ -61,7 +61,7 @@ struct Core {
     flights: DashMap<String, Arc<Flight>>,
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
-    tti_tx: Option<Sender<WorkerMsg>>,
+    tti_tx: Option<SyncSender<WorkerMsg>>,
     flight_timeout: u64,
     #[allow(dead_code)]
     tti_flush_secs: u64,
@@ -122,7 +122,7 @@ impl Core {
         let tti_flush_secs = tti_flush_secs.unwrap_or(30);
 
         if read_extend_ttl {
-            let (tx, rx) = mpsc::channel::<WorkerMsg>();
+            let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
             let storage_worker = Arc::clone(&storage);
             let trie_worker = trie.clone();
 
@@ -269,7 +269,7 @@ impl Core {
             storage::StorageResult::Hit(e) => e,
             storage::StorageResult::Expired => {
                 if let Some(tx) = &self.tti_tx {
-                    let _ = tx.send(WorkerMsg::Delete(key.to_string()));
+                    let _ = tx.try_send(WorkerMsg::Delete(key.to_string()));
                 }
                 return Ok(None);
             }
@@ -290,7 +290,7 @@ impl Core {
         }
 
         if let Some(tx) = &self.tti_tx {
-            let _ = tx.send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
+            let _ = tx.try_send(WorkerMsg::Touch(key.to_string(), self.default_ttl));
         }
 
         Ok(Some(entry.value.clone_ref(py)))
@@ -355,7 +355,7 @@ impl Core {
 
     fn request_prune(&self, max_age_secs: u64) {
         if let Some(tx) = &self.tti_tx {
-            let _ = tx.send(WorkerMsg::Prune(max_age_secs));
+            let _ = tx.try_send(WorkerMsg::Prune(max_age_secs));
         }
     }
 
