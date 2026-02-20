@@ -167,9 +167,9 @@ def cacheable(
 
             while True:
                 with _manager.telemetry.time_operation("cache_get_duration_seconds"):
-                    val, is_leader, fut = core.get_or_entry_async(key)
+                    val, is_leader, is_hit, fut = core.get_or_entry_async(key)
 
-                if val is not None:
+                if is_hit:
                     _manager.telemetry.increment("cache_hits_total")
                     return val
 
@@ -183,8 +183,8 @@ def cacheable(
 
                 sig = _register_flight_signal(key)
                 try:
-                    val, is_leader, fut = core.get_or_entry_async(key)
-                    if val is not None:
+                    val, is_leader, is_hit, fut = core.get_or_entry_async(key)
+                    if is_hit:
                         return val
                     if is_leader:
                         break
@@ -221,8 +221,8 @@ def cacheable(
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
             _manager.maybe_prune()
 
-            val, is_leader = core.get_or_entry(key)
-            if val is not None:
+            val, is_leader, is_hit = core.get_or_entry(key)
+            if is_hit:
                 _manager.telemetry.increment("cache_hits_total")
                 return val
 

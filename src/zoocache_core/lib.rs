@@ -196,15 +196,15 @@ impl Core {
         })
     }
 
-    fn get_or_entry(&self, py: Python, key: &str) -> PyResult<(Option<Py<PyAny>>, bool)> {
+    fn get_or_entry(&self, py: Python, key: &str) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
         if let Some(res) = self.get(py, key)? {
-            return Ok((Some(res), false));
+            return Ok((Some(res), false, true));
         }
 
         let (flight, is_leader) = try_enter_flight(&self.flights, key);
 
         if is_leader {
-            return Ok((None, true));
+            return Ok((None, true, false));
         }
         let timeout = self.flight_timeout;
         let status = py.detach(|| wait_for_flight(&flight, timeout));
@@ -212,7 +212,7 @@ impl Core {
         match status {
             FlightStatus::Done => {
                 let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-                Ok((state.1.as_ref().map(|obj| obj.clone_ref(py)), false))
+                Ok((state.1.as_ref().map(|obj| obj.clone_ref(py)), false, true))
             }
             FlightStatus::Error => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "Thundering herd leader failed",
@@ -226,15 +226,15 @@ impl Core {
         &self,
         py: Python,
         key: &str,
-    ) -> PyResult<(Option<Py<PyAny>>, bool, Option<Py<PyAny>>)> {
+    ) -> PyResult<(Option<Py<PyAny>>, bool, bool, Option<Py<PyAny>>)> {
         if let Some(res) = self.get(py, key)? {
-            return Ok((Some(res), false, None));
+            return Ok((Some(res), false, true, None));
         }
 
         let (flight, is_leader) = try_enter_flight(&self.flights, key);
 
         if is_leader {
-            return Ok((None, true, None));
+            return Ok((None, true, false, None));
         }
 
         let fut = flight
@@ -243,7 +243,7 @@ impl Core {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|f| f.clone_ref(py));
-        Ok((None, false, fut))
+        Ok((None, false, false, fut))
     }
 
     fn register_flight_future(&self, key: &str, future: Py<PyAny>) {
