@@ -106,21 +106,15 @@ impl Storage for LmdbStorage {
             Err(_) => return super::StorageResult::NotFound,
         };
 
-        if txn
-            .get(self.db_ttls, &key)
-            .ok()
-            .and_then(|d| d.try_into().ok().map(u64::from_le_bytes))
-            .filter(|&ts| ts != 0 && now_secs() > ts)
-            .is_some()
-        {
-            return super::StorageResult::Expired;
-        }
-
         let expires_at = txn
             .get(self.db_ttls, &key)
             .ok()
             .and_then(|d| d.try_into().ok().map(u64::from_le_bytes))
             .filter(|&ts| ts != 0);
+
+        if expires_at.is_some_and(|ts| now_secs() > ts) {
+            return super::StorageResult::Expired;
+        }
 
         let data = match txn.get(self.db_main, &key) {
             Ok(d) => d,
