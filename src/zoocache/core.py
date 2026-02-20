@@ -113,6 +113,21 @@ def _resolve_flight_signals(key: str) -> None:
             evt_loop.call_soon_threadsafe(sig.set)
 
 
+def _register_flight_signal(key: str) -> asyncio.Event:
+    loop = asyncio.get_running_loop()
+    sig = asyncio.Event()
+    _manager._flight_signals.setdefault(key, []).append((loop, sig))
+    return sig
+
+
+async def _wait_for_leader(fut: Any) -> Any:
+    timeout = _manager.config.get("flight_timeout", 60)
+    try:
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise RuntimeError("Thundering herd leader failed") from None
+
+
 def _generate_key(func: Callable, namespace: str | None, args: tuple, kwargs: dict) -> str:
     obj = (func.__module__, func.__qualname__, args, sorted(kwargs.items()))
     prefix = f"{namespace}:{func.__name__}" if namespace else func.__name__
@@ -151,20 +166,27 @@ def cacheable(
                 val, is_leader, fut = core.get_or_entry_async(key)
                 if val is not None:
                     return val
-
                 if is_leader:
                     break
 
+                # If there's already a future, wait for it
                 if fut is not None:
-                    timeout = _manager.config.get("flight_timeout", 60)
-                    try:
-                        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
-                    except asyncio.TimeoutError:
-                        raise RuntimeError("Thundering herd leader failed") from None
+                    return await _wait_for_leader(fut)
 
-                loop = asyncio.get_running_loop()
-                sig = asyncio.Event()
-                _manager._flight_signals.setdefault(key, []).append((loop, sig))
+                # Otherwise, register a signal and wait for the legacy-style resolution
+                # (Double-checked to avoid race conditions)
+                sig = _register_flight_signal(key)
+                val, is_leader, fut = core.get_or_entry_async(key)
+
+                if val is not None:
+                    _resolve_flight_signals(key)
+                    return val
+                if is_leader:
+                    break
+                if fut is not None:
+                    _resolve_flight_signals(key)
+                    return await _wait_for_leader(fut)
+
                 await sig.wait()
 
             try:
@@ -172,6 +194,7 @@ def cacheable(
                 core.register_flight_future(key, leader_fut)
             finally:
                 _resolve_flight_signals(key)
+
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
