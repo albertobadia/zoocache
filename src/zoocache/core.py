@@ -121,7 +121,15 @@ def _generate_key(
 ) -> str:
     obj = (func.__module__, func.__qualname__, args, sorted(kwargs.items()))
     prefix = f"{namespace}:{func.__name__}" if namespace else func.__name__
-    return hash_key(obj, prefix)
+    try:
+        return hash_key(obj, prefix)
+    except TypeError as e:
+        raise ValueError(
+            f"zoocache failed to serialize arguments for `{func.__name__}`.\n"
+            f"Ensure all arguments are standard primitive types (str, int, dict, list, etc.).\n"
+            f"If passing complex objects (e.g. Models, Dataclasses), extract their IDs or convert "
+            f"them to dicts before passing them to the cached function to ensure a stable cache key.\n"
+        ) from e
 
 
 def _collect_deps(
