@@ -27,6 +27,10 @@ telemetry = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
 ]
+fastapi = [
+    "fastapi>=0.129.0",
+    "pydantic>=2.12.5",
+]
 
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
@@ -52,6 +56,9 @@ dev = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
+    "fastapi>=0.129.0",
+    "pydantic>=2.12.5",
+    "httpx>=0.28.1",
 ]
 docs = [
     "mkdocs>=1.6.1",
