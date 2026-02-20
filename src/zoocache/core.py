@@ -13,7 +13,6 @@ class CacheManager:
     def __init__(self):
         self.core: Core | None = None
         self.config: dict[str, Any] = {}
-        self._op_count: int = 0
         self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
         self._telemetry: TelemetryManager = TelemetryManager()
         self._last_tti_dropped: int = 0
@@ -38,26 +37,17 @@ class CacheManager:
             self.core = Core(**core_args)
         return self.core
 
-    def maybe_prune(self) -> None:
-        self._op_count += 1
-        interval = self.config.get("auto_prune_interval", 1000)
-        if interval and self._op_count >= interval:
-            self._op_count = 0
-            if age := self.config.get("prune_after"):
-                core = self.get_core()
-                core.request_prune(age)
-
-            if self.core:
-                current_dropped = self.core.tti_dropped_messages()
-                if current_dropped > self._last_tti_dropped:
-                    delta = current_dropped - self._last_tti_dropped
-                    self.telemetry.increment("cache_tti_overflows_total", delta)
-                    self._last_tti_dropped = current_dropped
+    def check_telemetry(self) -> None:
+        if self.core:
+            current_dropped = self.core.tti_dropped_messages()
+            if current_dropped > self._last_tti_dropped:
+                delta = current_dropped - self._last_tti_dropped
+                self.telemetry.increment("cache_tti_overflows_total", delta)
+                self._last_tti_dropped = current_dropped
 
     def reset(self) -> None:
         self.core = None
         self.config = {}
-        self._op_count = 0
         self._flight_signals.clear()
         self._telemetry = TelemetryManager()
 
@@ -77,7 +67,7 @@ def configure(
     flight_timeout: int = 60,
     tti_flush_secs: int = 30,
     auto_prune_secs: int | None = None,
-    auto_prune_interval: int = 1000,
+    auto_prune_interval: int = 3600,
     lru_update_interval: int = 30,
     telemetry: TelemetryManager | None = None,
 ) -> None:
@@ -182,7 +172,7 @@ def cacheable(
         @functools.wraps(fn)
         async def async_wrapper(*args, **kwargs):
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
-            _manager.maybe_prune()
+            _manager.check_telemetry()
 
             while True:
                 with _manager.telemetry.time_operation("cache_get_duration_seconds"):
@@ -238,7 +228,7 @@ def cacheable(
         @functools.wraps(fn)
         def sync_wrapper(*args, **kwargs):
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
-            _manager.maybe_prune()
+            _manager.check_telemetry()
 
             val, is_leader, is_hit = core.get_or_entry(key)
             if is_hit:

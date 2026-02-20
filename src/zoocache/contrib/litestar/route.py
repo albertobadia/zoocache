@@ -36,7 +36,7 @@ def _make_async_wrapper(fn: Callable, namespace: str | None, deps: Callable | It
     async def async_wrapper(*args, **kwargs):
         hashable_kwargs = _extract_hashable_kwargs(kwargs)
         core, key = _manager.get_core(), _generate_key(fn, namespace, args, hashable_kwargs)
-        _manager.maybe_prune()
+        _manager.check_telemetry()
 
         while True:
             with _manager.telemetry.time_operation("cache_get_duration_seconds"):
@@ -101,7 +101,7 @@ def _make_sync_wrapper(fn: Callable, namespace: str | None, deps: Callable | Ite
     def sync_wrapper(*args, **kwargs):
         hashable_kwargs = _extract_hashable_kwargs(kwargs)
         core, key = _manager.get_core(), _generate_key(fn, namespace, args, hashable_kwargs)
-        _manager.maybe_prune()
+        _manager.check_telemetry()
 
         val, is_leader, is_hit = core.get_or_entry(key)
         if is_hit:
