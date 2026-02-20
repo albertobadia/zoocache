@@ -146,9 +146,8 @@ def cacheable(
                     except asyncio.TimeoutError:
                         raise RuntimeError("Thundering herd leader failed") from None
 
-                if key not in _manager._flight_signals:
-                    _manager._flight_signals[key] = asyncio.Event()
-                await _manager._flight_signals[key].wait()
+                sig = _manager._flight_signals.setdefault(key, asyncio.Event())
+                await sig.wait()
 
             try:
                 leader_fut = asyncio.get_running_loop().create_future()
