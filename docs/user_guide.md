@@ -85,6 +85,7 @@ configure(
     read_extend_ttl=True,                    # TTI mode (reset on read)
     auto_prune_secs=3600,                    # Background prune nodes older than 1h
     auto_prune_interval=600,                 # Run background prune every 10 min
+    lru_update_interval=30,                  # Debounce LRU updates (sees below)
 )
 ```
 
@@ -99,6 +100,7 @@ configure(
 | `read_extend_ttl` | `bool` | `True` | If `True`, reading extends TTL (TTI mode) |
 | `auto_prune_secs` | `int` | `3600` | Age (secs) for background pruning |
 | `auto_prune_interval` | `int` | `3600` | Interval (secs) for background pruning worker |
+| `lru_update_interval`| `int` | `30` | Min seconds between LRU updates per key |
 | `prune_after` | `int` | `None` | Reactive prune every 1000 ops (age in secs) |
 
 ---

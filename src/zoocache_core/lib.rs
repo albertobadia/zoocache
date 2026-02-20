@@ -64,15 +64,13 @@ struct Core {
     max_entries: Option<usize>,
     tti_tx: Option<SyncSender<WorkerMsg>>,
     flight_timeout: u64,
-    #[allow(dead_code)]
-    tti_flush_secs: u64,
 }
 
 #[pymethods]
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, redis_lru_interval=30))]
+    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30))]
     fn new(
         storage_url: Option<&str>,
         bus_url: Option<&str>,
@@ -85,11 +83,11 @@ impl Core {
         tti_flush_secs: Option<u64>,
         auto_prune_secs: Option<u64>,
         auto_prune_interval: Option<u64>,
-        redis_lru_interval: u64,
+        lru_update_interval: u64,
     ) -> PyResult<Self> {
         let storage: Arc<dyn Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => {
-                Arc::new(RedisStorage::new(url, prefix, redis_lru_interval).map_err(to_conn_err)?)
+                Arc::new(RedisStorage::new(url, prefix, lru_update_interval).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
                 Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size).map_err(to_runtime_err)?)
@@ -121,7 +119,7 @@ impl Core {
         };
 
         let mut tti_tx = None;
-        let tti_flush_secs = tti_flush_secs.unwrap_or(30);
+        let tti_flush_secs_val = tti_flush_secs.unwrap_or(30); // Use a local variable for the value
 
         if read_extend_ttl {
             let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
@@ -134,7 +132,7 @@ impl Core {
                 let mut batch = HashMap::<String, Option<u64>>::new();
                 let mut last_flush = Instant::now();
                 let mut last_auto_prune = Instant::now();
-                let flush_duration = Duration::from_secs(tti_flush_secs);
+                let flush_duration = Duration::from_secs(tti_flush_secs_val); // Use the local variable
                 let prune_interval = Duration::from_secs(auto_prune_interval.unwrap_or(3600));
                 let prune_age = auto_prune_secs.unwrap_or(3600);
 
@@ -150,7 +148,8 @@ impl Core {
                         WorkerMsg::Touch(key, ttl) => {
                             if !key.is_empty() {
                                 if last_touches.get(&key).is_some_and(|&last| {
-                                    now.duration_since(last) < Duration::from_secs(30)
+                                    now.duration_since(last)
+                                        < Duration::from_secs(lru_update_interval)
                                 }) {
                                     continue;
                                 }
@@ -194,7 +193,6 @@ impl Core {
             max_entries,
             tti_tx,
             flight_timeout: flight_timeout.unwrap_or(60),
-            tti_flush_secs,
         })
     }
 

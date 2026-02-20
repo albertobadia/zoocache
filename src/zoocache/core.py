@@ -27,7 +27,7 @@ class CacheManager:
 
     def get_core(self) -> Core:
         if self.core is None:
-            exclude = ("prune_after", "flight_timeout", "tti_flush_secs", "redis_lru_interval")
+            exclude = ("prune_after", "flight_timeout", "tti_flush_secs", "lru_update_interval")
             core_args = {k: v for k, v in self.config.items() if k not in exclude}
 
             if timeout := self.config.get("flight_timeout"):
@@ -38,8 +38,8 @@ class CacheManager:
                 core_args["auto_prune_secs"] = auto_prune_secs
             if auto_prune_interval := self.config.get("auto_prune_interval"):
                 core_args["auto_prune_interval"] = auto_prune_interval
-            if redis_lru_interval := self.config.get("redis_lru_interval"):
-                core_args["redis_lru_interval"] = redis_lru_interval
+            if lru_update_interval := self.config.get("lru_update_interval"):
+                core_args["lru_update_interval"] = lru_update_interval
 
             self.core = Core(**core_args)
         return self.core
@@ -75,7 +75,7 @@ def configure(
     tti_flush_secs: int = 30,
     auto_prune_secs: int | None = None,
     auto_prune_interval: int | None = None,
-    redis_lru_interval: int = 30,
+    lru_update_interval: int = 30,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -90,7 +90,7 @@ def configure(
         tti_flush_secs=tti_flush_secs,
         auto_prune_secs=auto_prune_secs,
         auto_prune_interval=auto_prune_interval,
-        redis_lru_interval=redis_lru_interval,
+        lru_update_interval=lru_update_interval,
     )
 
 
@@ -180,18 +180,19 @@ def cacheable(
                 # Otherwise, register a signal and wait for the legacy-style resolution
                 # (Double-checked to avoid race conditions)
                 sig = _register_flight_signal(key)
-                val, is_leader, fut = core.get_or_entry_async(key)
+                try:
+                    val, is_leader, fut = core.get_or_entry_async(key)
 
-                if val is not None:
-                    _resolve_flight_signals(key)
-                    return val
-                if is_leader:
-                    break
-                if fut is not None:
-                    _resolve_flight_signals(key)
-                    return await _wait_for_leader(fut)
+                    if val is not None:
+                        return val
+                    if is_leader:
+                        break
+                    if fut is not None:
+                        return await _wait_for_leader(fut)
 
-                await sig.wait()
+                    await sig.wait()
+                finally:
+                    _resolve_flight_signals(key)
 
             try:
                 leader_fut = asyncio.get_running_loop().create_future()

@@ -10,7 +10,7 @@ use super::{CacheEntry, Storage};
 pub(crate) struct RedisStorage {
     pool: Pool<Client>,
     prefix: String,
-    lru_interval: u64,
+    lru_update_interval: u64,
 }
 
 const GET_AND_TOUCH_SCRIPT: &str = r#"
@@ -29,7 +29,7 @@ impl RedisStorage {
     pub fn new(
         url: &str,
         prefix: Option<&str>,
-        lru_interval: u64,
+        lru_update_interval: u64,
     ) -> Result<Self, redis::RedisError> {
         let client = Client::open(url)?;
         let pool = Pool::builder()
@@ -39,7 +39,7 @@ impl RedisStorage {
         Ok(Self {
             pool,
             prefix: prefix.unwrap_or("zoocache").to_string(),
-            lru_interval,
+            lru_update_interval,
         })
     }
 
@@ -67,7 +67,7 @@ impl Storage for RedisStorage {
             .key(self.lru_key())
             .arg(now)
             .arg(key)
-            .arg(self.lru_interval)
+            .arg(self.lru_update_interval)
             .invoke(&mut conn)
         {
             Ok(res) => res,
