@@ -54,6 +54,7 @@ enum WorkerMsg {
     Prune(u64),
     Delete(String),
     Update(String, Vec<u8>, Option<u64>),
+    FlushMetrics(HashMap<String, f64>),
 }
 
 #[pyclass]
@@ -171,6 +172,9 @@ impl Core {
                         }
                         WorkerMsg::Update(key, data, ttl) => {
                             let _ = storage_worker.set_raw(key, data, ttl);
+                        }
+                        WorkerMsg::FlushMetrics(metrics) => {
+                            let _ = storage_worker.flush_metrics(metrics);
                         }
                     }
 
@@ -398,10 +402,7 @@ impl Core {
     }
 
     fn flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {
-        let storage = Arc::clone(&self.storage);
-        thread::spawn(move || {
-            let _ = storage.flush_metrics(metrics);
-        });
+        self.send_tti_msg(WorkerMsg::FlushMetrics(metrics));
         Ok(())
     }
 }
