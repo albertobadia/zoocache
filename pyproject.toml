@@ -15,6 +15,18 @@ dependencies = []
 
 [project.optional-dependencies]
 django = ["django>=5.2.11"]
+telemetry-prometheus = ["prometheus-client>=0.20.0"]
+telemetry-otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+telemetry = [
+    "prometheus-client>=0.20.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
 
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
@@ -36,6 +48,10 @@ dev = [
     "django>=5.2.11",
     "pytest-benchmark>=4.0.0",
     "djangorestframework>=3.16.1",
+    "prometheus-client>=0.20.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
 ]
 docs = [
     "mkdocs>=1.6.1",

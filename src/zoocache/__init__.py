@@ -1,6 +1,6 @@
-from ._zoocache import InvalidTag
-from .context import add_deps
-from .core import (
+from zoocache._zoocache import InvalidTag
+from zoocache.context import add_deps
+from zoocache.core import (
     cacheable,
     clear,
     configure,

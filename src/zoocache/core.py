@@ -4,10 +4,9 @@ import inspect
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from ._zoocache import Core, hash_key
-from .context import DepsTracker, get_current_deps
-
-PRUNE_CHECK_INTERVAL = 1000
+from zoocache._zoocache import Core, hash_key
+from zoocache.context import DepsTracker, get_current_deps
+from zoocache.telemetry import TelemetryManager
 
 
 class CacheManager:
@@ -16,14 +15,21 @@ class CacheManager:
         self.config: dict[str, Any] = {}
         self._op_count: int = 0
         self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
+        self._telemetry: TelemetryManager = TelemetryManager()
+
+    @property
+    def telemetry(self) -> TelemetryManager:
+        return self._telemetry
 
     def is_configured(self) -> bool:
         return self.core is not None or bool(self.config)
 
-    def configure(self, **kwargs) -> None:
+    def configure(self, telemetry: TelemetryManager | None = None, **kwargs) -> None:
         if self.is_configured() and any(self.config.get(k) != v for k, v in kwargs.items()):
             raise RuntimeError("zoocache already initialized with different settings")
         self.config = kwargs
+        if telemetry is not None:
+            self._telemetry = telemetry
 
     def get_core(self) -> Core:
         if self.core is None:
@@ -46,7 +52,8 @@ class CacheManager:
 
     def maybe_prune(self) -> None:
         self._op_count += 1
-        if self._op_count >= PRUNE_CHECK_INTERVAL:
+        interval = self.config.get("auto_prune_interval", 1000)
+        if interval and self._op_count >= interval:
             self._op_count = 0
             if age := self.config.get("prune_after"):
                 core = self.get_core()
@@ -57,6 +64,7 @@ class CacheManager:
         self.config = {}
         self._op_count = 0
         self._flight_signals.clear()
+        self._telemetry = TelemetryManager()
 
 
 _manager = CacheManager()
@@ -74,8 +82,9 @@ def configure(
     flight_timeout: int = 60,
     tti_flush_secs: int = 30,
     auto_prune_secs: int | None = None,
-    auto_prune_interval: int | None = None,
+    auto_prune_interval: int = 1000,
     lru_update_interval: int = 30,
+    telemetry: TelemetryManager | None = None,
 ) -> None:
     _manager.configure(
         storage_url=storage_url,
@@ -91,6 +100,7 @@ def configure(
         auto_prune_secs=auto_prune_secs,
         auto_prune_interval=auto_prune_interval,
         lru_update_interval=lru_update_interval,
+        telemetry=telemetry,
     )
 
 
@@ -104,6 +114,7 @@ def clear() -> None:
 
 def invalidate(tag: str) -> None:
     _manager.get_core().invalidate(tag)
+    _manager.telemetry.increment("cache_invalidations_total", labels={"tag_prefix": tag})
 
 
 def version() -> str:
@@ -129,6 +140,7 @@ async def _wait_for_leader(fut: Any) -> Any:
     try:
         return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
     except asyncio.TimeoutError:
+        _manager.telemetry.increment("singleflight_timeouts_total")
         raise RuntimeError("Thundering herd leader failed") from None
 
 
@@ -167,18 +179,21 @@ def cacheable(
             _manager.maybe_prune()
 
             while True:
-                val, is_leader, fut = core.get_or_entry_async(key)
+                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+                    val, is_leader, fut = core.get_or_entry_async(key)
+
                 if val is not None:
+                    _manager.telemetry.increment("cache_hits_total")
                     return val
+
+                _manager.telemetry.increment("cache_misses_total")
                 if is_leader:
                     break
 
-                # If there's already a future, wait for it
                 if fut is not None:
-                    return await _wait_for_leader(fut)
+                    with _manager.telemetry.time_operation("singleflight_wait_duration_seconds"):
+                        return await _wait_for_leader(fut)
 
-                # Otherwise, register a signal and wait for the legacy-style resolution
-                # (Double-checked to avoid race conditions)
                 sig = _register_flight_signal(key)
                 try:
                     val, is_leader, fut = core.get_or_entry_async(key)
@@ -203,12 +218,14 @@ def cacheable(
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
-                    core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                    with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                        core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
                 if not leader_fut.done():
                     leader_fut.set_result(res)
                 return res
             except Exception as e:
+                _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 core.finish_flight(key, True, None)
                 if not leader_fut.done():
                     leader_fut.set_exception(e)
@@ -222,16 +239,20 @@ def cacheable(
 
             val, is_leader = core.get_or_entry(key)
             if not is_leader:
+                _manager.telemetry.increment("cache_hits_total")
                 return val
 
+            _manager.telemetry.increment("cache_misses_total")
             try:
                 with DepsTracker():
                     res = fn(*args, **kwargs)
-                    core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                    with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                        core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
                 _resolve_flight_signals(key)
                 return res
             except Exception:
+                _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 core.finish_flight(key, True, None)
                 _resolve_flight_signals(key)
                 raise

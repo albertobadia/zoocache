@@ -35,6 +35,7 @@
 - 📦 **Smart Serialization**: Transparently handles MsgPack and LZ4 compression for maximum throughput and minimum storage.
 - 🔄 **Self-Healing Distributed Cache**: Automatic synchronization via Redis Bus with robust error recovery.
 - 🛡️ **Hardened Safety**: Strict tag validation and mutex-poisoning protection to ensure zero-crash operations.
+- 📊 **Observability & Telemetry**: Built-in support for Logs, Prometheus, and OpenTelemetry to monitor cache performance.
 
 ---
 
