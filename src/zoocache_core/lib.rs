@@ -66,6 +66,7 @@ struct Core {
     tti_tx: Option<SyncSender<WorkerMsg>>,
     dropped_tti_msgs: AtomicU64,
     flight_timeout: u64,
+    bus_is_remote: bool,
 }
 
 #[pymethods]
@@ -104,9 +105,11 @@ impl Core {
         };
 
         let trie = PrefixTrie::new();
+        let mut bus_is_remote = false;
 
         let bus: Arc<dyn InvalidateBus> = match bus_url {
             Some(url) => {
+                bus_is_remote = true;
                 let channel = prefix.map(|p| format!("{}:invalidate", p));
                 let r_bus =
                     Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(to_conn_err)?);
@@ -196,6 +199,7 @@ impl Core {
             tti_tx,
             dropped_tti_msgs: AtomicU64::new(0),
             flight_timeout: flight_timeout.unwrap_or(60),
+            bus_is_remote,
         })
     }
 
@@ -349,10 +353,12 @@ impl Core {
 
     fn invalidate(&self, py: Python, tag: &str) -> PyResult<()> {
         validate_tag(tag)?;
-        py.detach(|| {
-            let new_ver = self.trie.invalidate(tag);
+        let new_ver = self.trie.invalidate(tag);
+        if self.bus_is_remote {
+            py.detach(|| self.bus.publish(tag, new_ver));
+        } else {
             self.bus.publish(tag, new_ver);
-        });
+        }
         Ok(())
     }
 

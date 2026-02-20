@@ -110,7 +110,8 @@ def clear() -> None:
 
 def invalidate(tag: str) -> None:
     _manager.get_core().invalidate(tag)
-    _manager.telemetry.increment("cache_invalidations_total", labels={"tag_prefix": tag})
+    if _manager.telemetry.enabled:
+        _manager.telemetry.increment("cache_invalidations_total", labels={"tag_prefix": tag})
 
 
 def version() -> str:

@@ -13,6 +13,10 @@ class TelemetryManager:
         self._adapters = adapters or []
         self._enabled = bool(self._adapters)
 
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
     def increment(self, name: str, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
         if not self._enabled:
             return
