@@ -1,5 +1,9 @@
 <p align="center">
-  <img alt="ZooCache Logo" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-light.svg" width="600">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-light.svg">
+    <img alt="ZooCache Logo" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/logo-light.svg" width="600">
+  </picture>
 </p>
 
 <p align="center">
