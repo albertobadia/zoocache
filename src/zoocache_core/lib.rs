@@ -28,6 +28,18 @@ fn validate_tag(tag: &str) -> PyResult<()> {
     if tag.is_empty() {
         return Err(InvalidTag::new_err("Tag cannot be empty"));
     }
+    if tag.len() > 256 {
+        return Err(InvalidTag::new_err(format!(
+            "Tag length exceeded: {}. Max allowed is 256 characters.",
+            tag.len()
+        )));
+    }
+    if tag.starts_with(':') || tag.ends_with(':') || tag.starts_with('.') || tag.ends_with('.') {
+        return Err(InvalidTag::new_err(
+            "Tag cannot start or end with ':' or '.'",
+        ));
+    }
+
     let mut depth = 0;
     for c in tag.chars() {
         if c == ':' {
