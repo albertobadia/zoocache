@@ -138,15 +138,31 @@ impl PrefixTrie {
 
     pub fn prune(&self, max_age_secs: u64) {
         let now = now_secs();
+        let mut to_remove = Vec::new();
 
-        self.root
-            .children
-            .retain(|_, child| !Self::prune_recursive(child, now, max_age_secs));
+        for item in self.root.children.iter() {
+            if Self::should_prune(item.value(), now, max_age_secs) {
+                to_remove.push(item.key().clone());
+            }
+        }
+
+        for key in to_remove {
+            self.root.children.remove(&key);
+        }
     }
 
-    fn prune_recursive(node: &Arc<TrieNode>, now: u64, max_age_secs: u64) -> bool {
-        node.children
-            .retain(|_, child| !Self::prune_recursive(child, now, max_age_secs));
+    fn should_prune(node: &Arc<TrieNode>, now: u64, max_age_secs: u64) -> bool {
+        let mut children_to_remove = Vec::new();
+
+        for child in node.children.iter() {
+            if Self::should_prune(child.value(), now, max_age_secs) {
+                children_to_remove.push(child.key().clone());
+            }
+        }
+
+        for key in children_to_remove {
+            node.children.remove(&key);
+        }
 
         let last = node.last_accessed.load(Ordering::Relaxed);
         let age = now.saturating_sub(last);
