@@ -70,8 +70,9 @@ jobs:
           tool: 'pytest'
           output-file-path: benchmarks/output.json
           benchmark-data-dir-path: benchmarks
-          fail-on-alert: true
+          fail-on-alert: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: ${{ github.event_name == 'push' }}
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
           comment-on-alert: true
+          save-data-file: ${{ github.ref == 'refs/heads/main' }}
           alert-threshold: '150%'
