@@ -209,12 +209,14 @@ def cacheable(
                 if not leader_fut.done():
                     leader_fut.set_result(res)
                 return res
-            except Exception as e:
+            except BaseException as e:
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
-                core.finish_flight(key, True, None)
                 if not leader_fut.done():
                     leader_fut.set_exception(e)
                 raise
+            finally:
+                core.finish_flight(key, True, None)
+                _resolve_flight_signals(key)
 
         @functools.wraps(fn)
         def sync_wrapper(*args, **kwargs):
@@ -237,11 +239,11 @@ def cacheable(
                         core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
                 return res
-            except Exception:
+            except BaseException:
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
-                core.finish_flight(key, True, None)
                 raise
             finally:
+                core.finish_flight(key, True, None)
                 _resolve_flight_signals(key)
 
         return async_wrapper if inspect.iscoroutinefunction(fn) else sync_wrapper
