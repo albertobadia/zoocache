@@ -388,6 +388,7 @@ mod tests {
         let trie = PrefixTrie::new();
 
         // Use user:1
+        trie.invalidate("user:1");
         trie.prune(100);
         assert_eq!(trie.root.children.len(), 1);
 
