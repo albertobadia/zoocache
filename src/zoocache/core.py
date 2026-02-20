@@ -14,7 +14,9 @@ class CacheManager:
         self.core: Optional[Core] = None
         self.config: Dict[str, Any] = {}
         self._op_count: int = 0
-        self._flight_signals: Dict[str, asyncio.Event] = {}
+        self._flight_signals: Dict[
+            str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]
+        ] = {}
 
     def is_configured(self) -> bool:
         return self.core is not None or bool(self.config)
@@ -107,6 +109,13 @@ def version() -> str:
     return _manager.get_core().version()
 
 
+def _resolve_flight_signals(key: str) -> None:
+    signals = _manager._flight_signals.pop(key, [])
+    for evt_loop, sig in signals:
+        if not evt_loop.is_closed():
+            evt_loop.call_soon_threadsafe(sig.set)
+
+
 def _generate_key(
     func: Callable, namespace: Optional[str], args: tuple, kwargs: dict
 ) -> str:
@@ -154,15 +163,16 @@ def cacheable(
                     except asyncio.TimeoutError:
                         raise RuntimeError("Thundering herd leader failed") from None
 
-                sig = _manager._flight_signals.setdefault(key, asyncio.Event())
+                loop = asyncio.get_running_loop()
+                sig = asyncio.Event()
+                _manager._flight_signals.setdefault(key, []).append((loop, sig))
                 await sig.wait()
 
             try:
                 leader_fut = asyncio.get_running_loop().create_future()
                 core.register_flight_future(key, leader_fut)
             finally:
-                if sig := _manager._flight_signals.pop(key, None):
-                    sig.set()
+                _resolve_flight_signals(key)
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
@@ -192,9 +202,11 @@ def cacheable(
                     res = fn(*args, **kwargs)
                     core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 core.finish_flight(key, False, res)
+                _resolve_flight_signals(key)
                 return res
             except Exception:
                 core.finish_flight(key, True, None)
+                _resolve_flight_signals(key)
                 raise
 
         return async_wrapper if inspect.iscoroutinefunction(fn) else sync_wrapper
