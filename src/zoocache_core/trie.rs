@@ -358,19 +358,10 @@ mod tests {
         trie_old.invalidate("user:1");
         let v_old = trie_old.get_path_versions(&["user", "1"])[2];
 
-        // Process restarts, new trie starts at 0 or current time
         let trie_new = PrefixTrie::new();
-
-        // Snapshot from old process
         let snapshot_v = vec![0, 0, v_old];
-
-        // In the new trie, user:1 is 0.
-        // 0 <= v_old (which is a high timestamp).
-        // This means the cache entry is considered VALID even if it was from a previous process.
-        // This is exactly what we wanted: persistence compatibility.
         assert!(trie_new.is_valid_path(&["user", "1"], &snapshot_v));
 
-        // Now if we invalidate in the new process
         trie_new.invalidate("user:1");
         let v_new = trie_new.get_path_versions(&["user", "1"])[2];
 
@@ -397,19 +388,10 @@ mod tests {
         let trie = PrefixTrie::new();
 
         // Use user:1
-        trie.invalidate("user:1");
-
-        // Advance "time" by using a tiny max_age and sleeping or just checking age 0
-        // But since we can't easily mock SystemTime in std, let's just verify structure
-        assert_eq!(trie.root.children.len(), 1);
-
-        // Prune with age 0 (should prune everything that wasn't JUST touched)
-        // Wait, current node is touched in invalidate.
-        // Let's use a long sleep if needed, or just verify it doesn't prune what's new
         trie.prune(100);
         assert_eq!(trie.root.children.len(), 1);
 
-        std::thread::sleep(std::time::Duration::from_secs(2)); // Increased from 100ms to 2s for u64 seconds resolution
+        std::thread::sleep(std::time::Duration::from_secs(2));
         trie.prune(0);
         assert_eq!(trie.root.children.len(), 0);
     }

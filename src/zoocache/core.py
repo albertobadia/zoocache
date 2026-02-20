@@ -34,7 +34,6 @@ class CacheManager:
 
     def get_core(self) -> Core:
         if self.core is None:
-            # Handle prune_after at manager level
             core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
             self.core = Core(**core_args)
         return self.core
@@ -82,6 +81,11 @@ def configure(
     lru_update_interval: int = 30,
     telemetry: TelemetryManager | None = None,
 ) -> None:
+    if telemetry is None and bus_url and bus_url.startswith("redis://"):
+        from zoocache.telemetry.adapters.redis_adapter import RedisTelemetryAdapter
+
+        telemetry = TelemetryManager([RedisTelemetryAdapter(None, flush_interval=5.0)])
+
     _manager.configure(
         storage_url=storage_url,
         bus_url=bus_url,
@@ -98,6 +102,12 @@ def configure(
         lru_update_interval=lru_update_interval,
         telemetry=telemetry,
     )
+
+    if telemetry and hasattr(telemetry, "_adapters"):
+        core_instance = _manager.get_core()
+        for adapter in telemetry._adapters:
+            if type(adapter).__name__ == "RedisTelemetryAdapter":
+                adapter.core = core_instance
 
 
 def prune(max_age_secs: int = 3600) -> None:
@@ -201,7 +211,6 @@ def cacheable(
                         return await _wait_for_leader(fut)
                     await sig.wait()
                 except BaseException:
-                    # Let the leader handle signal resolution on failure
                     raise
 
             leader_fut = asyncio.get_running_loop().create_future()
@@ -238,7 +247,7 @@ def cacheable(
 
             _manager.telemetry.increment("cache_misses_total")
             if not is_leader:
-                return fn(*args, **kwargs)  # Bypass to avoid returning None if leader active
+                return fn(*args, **kwargs)
 
             success = False
             res = None

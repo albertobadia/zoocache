@@ -36,6 +36,13 @@ litestar = [
     "msgspec>=0.18.6",
     "pydantic>=2.12.5",
 ]
+cli = [
+    "textual>=0.47.0",
+    "redis>=5.0.0",
+]
+
+[project.scripts]
+zoocache = "zoocache.cli:main"
 
 [build-system]
 requires = ["maturin>=1.7,<2.0"]

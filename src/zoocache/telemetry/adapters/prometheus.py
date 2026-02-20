@@ -46,3 +46,6 @@ class PrometheusAdapter(TelemetryAdapter):
 
     def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         self._get_metric("gauge", name, labels).set(value)
+
+    def close(self) -> None:
+        pass

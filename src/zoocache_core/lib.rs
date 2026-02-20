@@ -395,6 +395,14 @@ impl Core {
     fn tti_dropped_messages(&self) -> u64 {
         self.dropped_tti_msgs.load(Ordering::Relaxed)
     }
+
+    fn flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {
+        let storage = Arc::clone(&self.storage);
+        thread::spawn(move || {
+            let _ = storage.flush_metrics(metrics);
+        });
+        Ok(())
+    }
 }
 
 impl Core {
