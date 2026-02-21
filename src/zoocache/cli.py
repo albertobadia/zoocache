@@ -10,15 +10,15 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    dashboard_parser = subparsers.add_parser("dashboard", help="Launch the TUI Dashboard")
-    dashboard_parser.add_current_env_var = "REDIS_URL"
-    dashboard_parser.add_argument(
+    cli_parser = subparsers.add_parser("cli", aliases=["dashboard"], help="Launch the TUI CLI")
+    cli_parser.add_current_env_var = "REDIS_URL"
+    cli_parser.add_argument(
         "--redis",
         type=str,
         default=os.getenv("REDIS_URL"),
         help="Redis connection URL (e.g. redis://localhost:6379). Defaults to REDIS_URL env var.",
     )
-    dashboard_parser.add_argument(
+    cli_parser.add_argument(
         "--prefix",
         type=str,
         default="zoocache",
@@ -31,26 +31,26 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    if args.command == "dashboard":
-        run_dashboard(args)
+    if args.command in ("cli", "dashboard"):
+        run_cli(args)
 
 
-def run_dashboard(args: argparse.Namespace) -> None:
+def run_cli(args: argparse.Namespace) -> None:
     if not args.redis:
-        print("Error: A Redis URL is required to launch the dashboard.", file=sys.stderr)
+        print("Error: A Redis URL is required to launch the CLI.", file=sys.stderr)
         print("Provide it via --redis or the REDIS_URL environment variable.", file=sys.stderr)
         print("\nNote: The application being monitored MUST have ZooCache configured", file=sys.stderr)
         print("with storage_url pointing to this Redis instance to receive telemetry.", file=sys.stderr)
         sys.exit(1)
 
     try:
-        from zoocache.tui.app import ZooCacheDashboard
+        from zoocache.tui.app import ZooCacheCLI
     except ImportError:
-        print("Error: The 'textual' package is required for the dashboard.", file=sys.stderr)
+        print("Error: The 'textual' package is required for the CLI.", file=sys.stderr)
         print("Please install ZooCache with the cli extras: pip install zoocache[cli]", file=sys.stderr)
         sys.exit(1)
 
-    app = ZooCacheDashboard(redis_url=args.redis, prefix=args.prefix)
+    app = ZooCacheCLI(redis_url=args.redis, prefix=args.prefix)
     app.run()
 
 
