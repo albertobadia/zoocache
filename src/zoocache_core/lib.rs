@@ -87,8 +87,9 @@ struct Core {
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30))]
+    #[pyo3(signature = (node_id=None, storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30))]
     fn new(
+        node_id: Option<&str>,
         storage_url: Option<&str>,
         bus_url: Option<&str>,
         prefix: Option<&str>,
@@ -146,8 +147,13 @@ impl Core {
             let storage_worker = Arc::clone(&storage);
             let trie_worker = trie.clone();
             let bus_worker = Arc::clone(&bus);
+            let node_id_worker = node_id.unwrap_or("unknown").to_string();
 
             thread::spawn(move || {
+                let mut sys = sysinfo::System::new_all();
+                let mut local_metrics: HashMap<String, f64> = HashMap::new();
+                let mut last_heartbeat = Instant::now();
+
                 let mut last_touches =
                     lru::LruCache::<String, Instant>::new(NonZeroUsize::new(10000).unwrap());
                 let mut batch = HashMap::<String, Option<u64>>::new();
@@ -191,8 +197,9 @@ impl Core {
                             let _ = storage_worker.set_raw(key, data, ttl);
                         }
                         WorkerMsg::FlushMetrics(metrics) => {
-                            let _ = storage_worker.flush_metrics(metrics.clone());
-                            let _ = bus_worker.flush_metrics(metrics);
+                            for (k, v) in metrics {
+                                *local_metrics.entry(k).or_insert(0.0) += v;
+                            }
                         }
                     }
 
@@ -206,6 +213,38 @@ impl Core {
                     if now.duration_since(last_auto_prune) > prune_interval {
                         trie_worker.prune(prune_age);
                         last_auto_prune = now;
+                    }
+
+                    if bus_is_remote && now.duration_since(last_heartbeat) > Duration::from_secs(1)
+                    {
+                        sys.refresh_cpu_usage();
+                        sys.refresh_memory();
+                        let cpu_percent = sys.global_cpu_usage();
+                        let ram_used = sys.used_memory() as f64;
+                        let ram_total = sys.total_memory() as f64;
+                        let ram_percent = if ram_total > 0.0 {
+                            (ram_used / ram_total) * 100.0
+                        } else {
+                            0.0
+                        };
+                        let hostname =
+                            sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
+                        let uptime = sysinfo::System::uptime();
+
+                        let payload = serde_json::json!({
+                            "uuid": node_id_worker,
+                            "hostname": hostname,
+                            "cpu": cpu_percent,
+                            "ram": ram_percent,
+                            "uptime": uptime,
+                            "metrics": local_metrics,
+                        });
+
+                        if let Ok(json_str) = serde_json::to_string(&payload) {
+                            let _ = bus_worker.push_heartbeat(&node_id_worker, &json_str, 5);
+                        }
+
+                        last_heartbeat = now;
                     }
                 }
             });

@@ -92,17 +92,19 @@ impl InvalidateBus for RedisPubSubBus {
         }
     }
 
-    fn flush_metrics(&self, metrics: std::collections::HashMap<String, f64>) -> pyo3::PyResult<()> {
+    fn push_heartbeat(&self, node_id: &str, payload: &str, ttl: u64) -> pyo3::PyResult<()> {
         use crate::utils::to_conn_err;
         let mut conn = self.pool.get().map_err(to_conn_err)?;
-        let mut pipe = redis::pipe();
+        let key = format!("{}:node:{}", self.prefix, node_id);
 
-        for (key, value) in metrics {
-            let redis_key = format!("{}:metrics:{}", self.prefix, key);
-            pipe.cmd("INCRBYFLOAT").arg(redis_key).arg(value);
-        }
+        let _: () = redis::cmd("SET")
+            .arg(&key)
+            .arg(payload)
+            .arg("EX")
+            .arg(ttl)
+            .query(&mut conn)
+            .map_err(to_conn_err)?;
 
-        let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
         Ok(())
     }
 }

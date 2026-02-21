@@ -3,7 +3,6 @@ use crate::utils::to_conn_err;
 use pyo3::prelude::*;
 use r2d2::Pool;
 use redis::{Client, Commands};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::{CacheEntry, Storage};
@@ -212,18 +211,5 @@ impl Storage for RedisStorage {
         }
 
         Ok(to_evict)
-    }
-
-    fn flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {
-        let mut conn = self.pool.get().map_err(to_conn_err)?;
-        let mut pipe = redis::pipe();
-
-        for (key, value) in metrics {
-            let redis_key = format!("{}:metrics:{}", self.prefix, key);
-            pipe.cmd("INCRBYFLOAT").arg(redis_key).arg(value);
-        }
-
-        let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
-        Ok(())
     }
 }

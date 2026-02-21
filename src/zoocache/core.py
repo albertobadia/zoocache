@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import inspect
+import uuid
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -11,6 +12,7 @@ from zoocache.telemetry import TelemetryManager
 
 class CacheManager:
     def __init__(self):
+        self.node_id = uuid.uuid4().hex[:8]
         self.core: Core | None = None
         self.config: dict[str, Any] = {}
         self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
@@ -34,6 +36,7 @@ class CacheManager:
     def get_core(self) -> Core:
         if self.core is None:
             core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
+            core_args["node_id"] = getattr(self, "node_id", uuid.uuid4().hex[:8])
             self.core = Core(**core_args)
         return self.core
 
@@ -46,6 +49,7 @@ class CacheManager:
                 self._last_tti_dropped = current_dropped
 
     def reset(self) -> None:
+        self.node_id = uuid.uuid4().hex[:8]
         self.core = None
         self.config = {}
         self._flight_signals.clear()

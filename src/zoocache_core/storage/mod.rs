@@ -101,7 +101,4 @@ pub(crate) trait Storage: Send + Sync {
     fn clear(&self) -> PyResult<()>;
     fn len(&self) -> usize;
     fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
-    fn flush_metrics(&self, _metrics: HashMap<String, f64>) -> PyResult<()> {
-        Ok(())
-    }
 }
