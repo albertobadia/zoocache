@@ -8,14 +8,14 @@ By using the `@cache_endpoint` decorator, you get the exact same benefits of `zo
 
 The FastAPI integration is available as an optional extra.
 
+Using `uv` (recommended):
+```bash
+uv add "zoocache[fastapi]"
+```
+
 Using `pip`:
 ```bash
 pip install "zoocache[fastapi]"
-```
-
-Using `uv`:
-```bash
-uv add "zoocache[fastapi]"
 ```
 
 ## Quick Start

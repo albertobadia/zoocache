@@ -18,6 +18,12 @@ This guide covers everything you need to use Zoocache effectively.
 
 ## Installation
 
+Using `uv` (recommended):
+```bash
+uv add zoocache
+```
+
+Using `pip`:
 ```bash
 pip install zoocache
 ```
@@ -229,6 +235,34 @@ from zoocache import prune
 prune(86400)  # Remove nodes unused for 24 hours
 ```
 
+### TUI Commands
+
+Zoocache now features a Terminal User Interface (TUI) for real-time monitoring and control. You can run the TUI by executing:
+
+```bash
+uv run zoocache cli
+```
+
+The TUI allows you to visualize hit rates, latencies, memory usage, and the cache trie structure. 
+
+#### Targeted TUI Commands
+
+You can execute commands against the cache nodes directly from the TUI's command bar using the targeted command syntax:
+
+```
+[target] command [args]
+```
+
+Where `[target]` can be:
+- `all`: All active nodes (Default if no target specified)
+- `local`: The primary node
+- `node_id`: A specific node's identifier
+
+**Example Commands:**
+- `all clear`: Clear the cache on all nodes.
+- `local prune 3600`: Prune the local cache of elements older than 1 hour.
+- `node_xyz invalidate user:42`: Invalidate `user:42` strictly on the `node_xyz` node.
+
 ### `configure(...)`
 
 See [Configuration](#configuration) section.
@@ -397,6 +431,7 @@ configure(auto_prune_secs=3600, auto_prune_interval=600)  # Enable background pr
 configure(prune_after=3600)
 ```
 # Or manually
+```python
 from zoocache import prune
 prune(3600)
 ```

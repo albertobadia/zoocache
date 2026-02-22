@@ -39,18 +39,36 @@
 
 ---
 
+## 🚀 Performance
+
+Zoocache is continuously benchmarked to ensure zero performance regressions. We track micro-latency, scaling with dependencies, and storage overhead.
+
+<!-- PERFORMANCE-CHART:START -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="benchmarks/reports/comparison-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="benchmarks/reports/comparison-light.svg">
+    <img alt="ZooCache Performance" src="benchmarks/reports/comparison-light.svg" width="830">
+  </picture>
+</p>
+
+> **Note**: Benchmark scale: 5,000 operations. ZooCache maintains O(1) tagging overhead and scales linearly. Latency values represent the end-to-end operation time including storage overhead.
+<!-- PERFORMANCE-CHART:END -->
+
+---
+
 ## ⚡ Quick Start
 
 ### Installation
 
-Using `pip`:
-```bash
-pip install zoocache
-```
-
 Using `uv` (recommended):
 ```bash
 uv add zoocache
+```
+
+Using `pip`:
+```bash
+pip install zoocache
 ```
 
 ### Simple Usage
@@ -89,6 +107,14 @@ def get_product_page(product_id: int, store_id: int):
 # invalidate("region:eu") -> Clears ALL prices in that region
 ```
 
+### Terminal User Interface (TUI)
+
+Zoocache comes with a built-in TUI to monitor metrics, view the caching trie, and run real-time commands such as cache invalidation. 
+
+```bash
+uv run zoocache cli
+```
+
 ---
 
 ## 📖 Documentation
@@ -100,10 +126,10 @@ Explore the deep dives into Zoocache's architecture and features:
 - [**Serialization Pipeline**](docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
 - [**Concurrency & SingleFlight**](docs/concurrency.md) - Shielding your database from traffic spikes.
 - [**Distributed Consistency**](docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
-- [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
-- [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
 - [**FastAPI Integration**](docs/fastapi.md) - Out-of-box caching for FastAPI endpoints.
 - [**Litestar Integration**](docs/litestar.md) - Out-of-box caching for Litestar endpoints.
+- [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
+- [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
 - [**Django Serializers Auto**](docs/django_serializers.md) - Automatic caching for Django REST Framework.
 - [**Reliability & Edge Cases**](docs/reliability.md) - Fail-fast mechanisms and memory management.
 
@@ -113,25 +139,6 @@ Explore the deep dives into Zoocache's architecture and features:
 
 ---
 
-## ⚖️ Comparison
-
-| Feature | **🐾 Zoocache** | **🔴 Redis (Raw)** | **🐶 Dogpile** | **diskcache** |
-| :--- | :--- | :--- | :--- | :--- |
-| **Invalidation** | 🧠 **Semantic (Trie)** | 🔧 Manual | 🔧 Manual | ⏳ TTL |
-| **Consistency** | 🛡️ **Causal (HLC)** | ❌ Eventual | ❌ No | ❌ No |
-| **Anti-Avalanche** | ✅ **Native** | ❌ No | ✅ Yes (Locks) | ❌ No |
-| **Performance** | 🚀 **Very High** | 🏎️ High | 🐢 Medium | 🐢 Medium |
-
----
-
-## 🚀 Performance
-
-Zoocache is continuously benchmarked to ensure zero performance regressions. We track micro-latency, scaling with dependencies, and storage overhead.
-
-<!-- AUTO-GENERATED-CONTENT:START (SOURCES:src=benchmarks/reports/benchmarks_summary.md) -->
-<!-- AUTO-GENERATED-CONTENT:END -->
-
----
 
 ## ❓ When to Use Zoocache
 

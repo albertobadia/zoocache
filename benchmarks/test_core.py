@@ -24,6 +24,25 @@ def test_hit_latency(benchmark):
     benchmark(fast_func, 1)
 
 
+def test_bulk_read(benchmark):
+    """Benchmark reading 1000 items in a single thread."""
+
+    @cacheable(namespace="bulk")
+    def get_data(i):
+        return i
+
+    def setup():
+        clear()
+        for i in range(1000):
+            get_data(i)
+
+    def do_read():
+        for i in range(1000):
+            get_data(i)
+
+    benchmark.pedantic(do_read, setup=setup, rounds=50, iterations=1)
+
+
 def test_thundering_herd(benchmark):
     """Benchmark SingleFlight behavior under high concurrency."""
     calls = {"count": 0}

@@ -89,20 +89,49 @@ pub(crate) enum StorageResult {
     NotFound,
 }
 
+use async_trait::async_trait;
+
+#[async_trait]
 pub(crate) trait Storage: Send + Sync {
-    fn get(&self, key: &str) -> StorageResult;
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
-    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+    async fn get(&self, key: &str) -> StorageResult;
+    async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
+    async fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
         let entry = Python::attach(|py| CacheEntry::deserialize(py, &data))?;
-        self.set(key, Arc::new(entry), ttl)
+        self.set(key, Arc::new(entry), ttl).await
     }
-    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
-    fn remove(&self, key: &str) -> PyResult<()>;
-    fn clear(&self) -> PyResult<()>;
+    async fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
+    async fn remove(&self, key: &str) -> PyResult<()>;
+    async fn clear(&self) -> PyResult<()>;
     fn len(&self) -> usize;
-    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
-    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)>;
+    async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
+    async fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)>;
     fn needs_tti_worker(&self) -> bool {
         false
+    }
+    fn try_get_sync(&self, py: Python, key: &str) -> Option<StorageResult> {
+        let _ = py;
+        let _ = key;
+        None
+    }
+    fn try_set_sync(
+        &self,
+        _py: Python,
+        _key: String,
+        _entry: Arc<CacheEntry>,
+        _ttl: Option<u64>,
+    ) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Sync set not supported",
+        ))
+    }
+    fn try_remove_sync(&self, _key: &str) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Sync remove not supported",
+        ))
+    }
+    fn try_clear_sync(&self) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Sync clear not supported",
+        ))
     }
 }

@@ -1,6 +1,6 @@
 use crate::utils::now_secs;
 use dashmap::DashMap;
-use pyo3::PyResult;
+use pyo3::prelude::*;
 use std::sync::Arc;
 
 use super::{CacheEntry, Storage};
@@ -15,35 +15,45 @@ impl InMemoryStorage {
             map: DashMap::new(),
         }
     }
-}
 
-impl Storage for InMemoryStorage {
-    #[inline]
-    fn get(&self, key: &str) -> super::StorageResult {
-        let mut entry = match self.map.get_mut(key) {
-            Some(e) => e,
-            None => return super::StorageResult::NotFound,
-        };
-        let (val, expires_at, last_accessed) = entry.value_mut();
-
-        if expires_at.is_some_and(|expires| now_secs() > expires) {
-            return super::StorageResult::Expired;
-        }
-
-        *last_accessed = now_secs();
-        super::StorageResult::Hit(Arc::clone(val), *expires_at)
-    }
-
-    #[inline]
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+    fn set_internal(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
         let expires_at = ttl.map(|t| now_secs() + t);
         let last_accessed = now_secs();
         self.map.insert(key, (entry, expires_at, last_accessed));
         Ok(())
     }
+}
+
+use async_trait::async_trait;
+
+#[async_trait]
+impl Storage for InMemoryStorage {
+    #[inline]
+    async fn get(&self, key: &str) -> super::StorageResult {
+        Python::attach(|py| {
+            self.try_get_sync(py, key)
+                .unwrap_or(super::StorageResult::NotFound)
+        })
+    }
+
+    fn try_get_sync(&self, _py: Python, key: &str) -> Option<super::StorageResult> {
+        let mut entry = self.map.get_mut(key)?;
+        let (val, expires_at, last_accessed) = entry.value_mut();
+
+        if expires_at.is_some_and(|expires| now_secs() > expires) {
+            return Some(super::StorageResult::Expired);
+        }
+
+        *last_accessed = now_secs();
+        Some(super::StorageResult::Hit(Arc::clone(val), *expires_at))
+    }
+
+    async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+        self.set_internal(key, entry, ttl)
+    }
 
     #[inline]
-    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
+    async fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
         for (key, ttl) in updates {
             if let Some(mut entry) = self.map.get_mut(&key) {
                 if let Some(t) = ttl {
@@ -56,12 +66,12 @@ impl Storage for InMemoryStorage {
     }
 
     #[inline]
-    fn remove(&self, key: &str) -> PyResult<()> {
+    async fn remove(&self, key: &str) -> PyResult<()> {
         self.map.remove(key);
         Ok(())
     }
 
-    fn clear(&self) -> PyResult<()> {
+    async fn clear(&self) -> PyResult<()> {
         self.map.clear();
         Ok(())
     }
@@ -70,7 +80,7 @@ impl Storage for InMemoryStorage {
         self.map.len()
     }
 
-    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
+    async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
         let mut entries: Vec<(String, u64)> = self
             .map
             .iter()
@@ -92,7 +102,7 @@ impl Storage for InMemoryStorage {
         Ok(to_evict)
     }
 
-    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+    async fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
         let mut results = Vec::new();
         for entry in self.map.iter() {
             let key = entry.key();
@@ -105,5 +115,25 @@ impl Storage for InMemoryStorage {
             }
         }
         results
+    }
+
+    fn try_set_sync(
+        &self,
+        _py: Python,
+        key: String,
+        entry: Arc<CacheEntry>,
+        ttl: Option<u64>,
+    ) -> PyResult<()> {
+        self.set_internal(key, entry, ttl)
+    }
+
+    fn try_remove_sync(&self, key: &str) -> PyResult<()> {
+        self.map.remove(key);
+        Ok(())
+    }
+
+    fn try_clear_sync(&self) -> PyResult<()> {
+        self.map.clear();
+        Ok(())
     }
 }

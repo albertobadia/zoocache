@@ -119,6 +119,13 @@ def invalidate(tag: str) -> None:
         _manager.telemetry.increment("cache_invalidations_total", labels={"tag_prefix": tag})
 
 
+async def invalidate_async(tag: str) -> None:
+    await _manager.get_core().invalidate_async(tag)
+    if _manager.telemetry.enabled:
+        _manager.telemetry.increment("cache_invalidations_total")
+        _manager.telemetry.increment("cache_invalidations_total", labels={"tag_prefix": tag})
+
+
 def version() -> str:
     return _manager.get_core().version()
 
@@ -181,7 +188,7 @@ def cacheable(
 
             while True:
                 with _manager.telemetry.time_operation("cache_get_duration_seconds"):
-                    val, is_leader, is_hit, fut = core.get_or_entry_async(key)
+                    val, is_leader, is_hit = await core.get_or_entry_async(key)
 
                 if is_hit:
                     _manager.telemetry.increment("cache_hits_total")
@@ -191,41 +198,18 @@ def cacheable(
                 if is_leader:
                     break
 
-                if fut is not None:
-                    with _manager.telemetry.time_operation("singleflight_wait_duration_seconds"):
-                        return await _wait_for_leader(fut)
-
-                sig = _register_flight_signal(key)
-                try:
-                    val, is_leader, is_hit, fut = core.get_or_entry_async(key)
-                    if is_hit:
-                        return val
-                    if is_leader:
-                        break
-                    if fut is not None:
-                        return await _wait_for_leader(fut)
-                    await sig.wait()
-                except BaseException:
-                    raise
-
-            leader_fut = asyncio.get_running_loop().create_future()
-            core.register_flight_future(key, leader_fut)
+                await asyncio.sleep(0.01)
 
             success = False
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
                     with _manager.telemetry.time_operation("cache_set_duration_seconds"):
-                        core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                        await core.set_async(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 success = True
-                if not leader_fut.done():
-                    leader_fut.set_result(res)
                 return res
-            except BaseException as e:
-                _manager.telemetry.increment("cache_errors_total")
+            except BaseException:
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
-                if not leader_fut.done():
-                    leader_fut.set_exception(e)
                 raise
             finally:
                 core.finish_flight(key, not success, res if success else None)
@@ -236,7 +220,9 @@ def cacheable(
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
             _manager.check_telemetry()
 
-            val, is_leader, is_hit = core.get_or_entry(key)
+            with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+                val, is_leader, is_hit = core.get_or_entry(key)
+
             if is_hit:
                 _manager.telemetry.increment("cache_hits_total")
                 return val
@@ -276,5 +262,17 @@ def get_cache(key: str) -> Any:
     return _manager.get_core().get(key)
 
 
+async def get_cache_async(key: str) -> Any:
+    core = _manager.get_core()
+    val = core.get_sync(key)
+    if val is not None:
+        return val
+    return await core.get_async(key)
+
+
 def set_cache(key: str, value: Any, deps: Iterable[str] = (), ttl: int | None = None) -> None:
     _manager.get_core().set(key, value, list(deps), ttl=ttl)
+
+
+async def set_cache_async(key: str, value: Any, deps: Iterable[str] = (), ttl: int | None = None) -> None:
+    await _manager.get_core().set_async(key, value, list(deps), ttl=ttl)

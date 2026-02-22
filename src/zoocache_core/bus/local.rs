@@ -1,4 +1,5 @@
 use super::InvalidateBus;
+use async_trait::async_trait;
 
 pub(crate) struct LocalBus;
 
@@ -8,6 +9,7 @@ impl LocalBus {
     }
 }
 
+#[async_trait]
 impl InvalidateBus for LocalBus {
-    fn publish(&self, _tag: &str, _version: u64) {}
+    async fn publish(&self, _tag: &str, _version: u64) {}
 }

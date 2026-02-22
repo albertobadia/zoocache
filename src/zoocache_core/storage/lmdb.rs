@@ -1,6 +1,7 @@
 use crate::StorageIsFull;
-use crate::storage::{CacheEntry, Storage};
+use crate::storage::{CacheEntry, Storage, StorageResult};
 use crate::utils::{now_nanos, now_secs, to_runtime_err};
+use async_trait::async_trait;
 use lmdb::{
     Cursor, Database, DatabaseFlags, Environment, EnvironmentFlags, Transaction, WriteFlags,
 };
@@ -10,13 +11,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(crate) struct LmdbStorage {
-    env: Environment,
+    env: Arc<Environment>,
     db_main: Database,
     db_ttls: Database,
     db_lru: Database,
     db_lru_index: Database,
     db_meta: Database,
-    count: AtomicUsize,
+    count: Arc<AtomicUsize>,
 }
 
 impl LmdbStorage {
@@ -35,7 +36,6 @@ impl LmdbStorage {
             .set_flags(
                 EnvironmentFlags::NO_SYNC
                     | EnvironmentFlags::NO_META_SYNC
-                    | EnvironmentFlags::NO_TLS
                     | EnvironmentFlags::WRITE_MAP
                     | EnvironmentFlags::MAP_ASYNC,
             )
@@ -67,13 +67,13 @@ impl LmdbStorage {
         .unwrap_or(0) as usize;
 
         Ok(Self {
-            env,
+            env: Arc::new(env),
             db_main,
             db_ttls,
             db_lru,
             db_lru_index,
             db_meta,
-            count: AtomicUsize::new(count),
+            count: Arc::new(AtomicUsize::new(count)),
         })
     }
 
@@ -84,24 +84,33 @@ impl LmdbStorage {
         buf
     }
 
-    fn delete_from_index(&self, txn: &mut lmdb::RwTransaction, key: &str) {
+    fn delete_from_index(
+        txn: &mut lmdb::RwTransaction,
+        db_lru: Database,
+        db_lru_index: Database,
+        key: &str,
+    ) {
         let old_ts = txn
-            .get(self.db_lru, &key)
+            .get(db_lru, &key)
             .ok()
             .and_then(|d| d.try_into().ok().map(u64::from_le_bytes));
 
         if let Some(ts) = old_ts {
-            let _ = txn.del(self.db_lru_index, &Self::make_index_key(ts, key), None);
+            let _ = txn.del(db_lru_index, &Self::make_index_key(ts, key), None);
         }
     }
 
-    fn remove_internal(&self, txn: &mut lmdb::RwTransaction, key: &str) -> bool {
-        self.delete_from_index(txn, key);
+    fn remove_internal(
+        txn: &mut lmdb::RwTransaction,
+        dbs: &(Database, Database, Database, Database),
+        key: &str,
+    ) -> bool {
+        Self::delete_from_index(txn, dbs.2, dbs.3, key);
 
-        if txn.get(self.db_main, &key).is_ok() {
-            let _ = txn.del(self.db_main, &key, None);
-            let _ = txn.del(self.db_ttls, &key, None);
-            let _ = txn.del(self.db_lru, &key, None);
+        if txn.get(dbs.0, &key).is_ok() {
+            let _ = txn.del(dbs.0, &key, None);
+            let _ = txn.del(dbs.1, &key, None);
+            let _ = txn.del(dbs.2, &key, None);
             true
         } else {
             false
@@ -119,166 +128,127 @@ impl LmdbStorage {
             to_runtime_err(e)
         }
     }
+
+    fn put_internal(&self, key: &str, data: &[u8], ttl: Option<u64>) -> PyResult<()> {
+        let env = &self.env;
+        let count_atom = &self.count;
+        let dbs = (
+            self.db_main,
+            self.db_ttls,
+            self.db_lru,
+            self.db_lru_index,
+            self.db_meta,
+        );
+
+        let mut txn = env.begin_rw_txn().map_err(to_runtime_err)?;
+        Self::delete_from_index(&mut txn, dbs.2, dbs.3, key);
+
+        let is_new = txn.get(dbs.0, &key).is_err();
+        let new_ts = now_nanos();
+
+        txn.put(dbs.0, &key, &data, WriteFlags::empty())
+            .map_err(Self::to_storage_is_full_err)?;
+        txn.put(dbs.2, &key, &new_ts.to_le_bytes(), WriteFlags::empty())
+            .map_err(Self::to_storage_is_full_err)?;
+        txn.put(
+            dbs.3,
+            &Self::make_index_key(new_ts, key),
+            &[],
+            WriteFlags::empty(),
+        )
+        .map_err(Self::to_storage_is_full_err)?;
+
+        if let Some(t) = ttl {
+            let expire_at = now_secs() + t;
+            txn.put(dbs.1, &key, &expire_at.to_le_bytes(), WriteFlags::empty())
+                .map_err(Self::to_storage_is_full_err)?;
+        } else {
+            let _ = txn.del(dbs.1, &key, None);
+        }
+
+        if is_new {
+            let current_count = count_atom.load(Ordering::SeqCst);
+            let new_count = current_count + 1;
+            txn.put(
+                dbs.4,
+                b"count",
+                &(new_count as u64).to_le_bytes(),
+                WriteFlags::empty(),
+            )
+            .map_err(Self::to_storage_is_full_err)?;
+        }
+
+        txn.commit().map_err(Self::to_storage_is_full_err)?;
+
+        if is_new {
+            count_atom.fetch_add(1, Ordering::SeqCst);
+        }
+
+        Ok(())
+    }
 }
 
+#[async_trait]
 impl Storage for LmdbStorage {
-    fn get(&self, key: &str) -> super::StorageResult {
-        let txn = match self.env.begin_ro_txn() {
-            Ok(t) => t,
-            Err(_) => return super::StorageResult::NotFound,
-        };
+    async fn get(&self, key: &str) -> StorageResult {
+        Python::attach(|py| {
+            self.try_get_sync(py, key)
+                .unwrap_or(StorageResult::NotFound)
+        })
+    }
 
+    fn try_get_sync(&self, py: Python, key: &str) -> Option<StorageResult> {
+        let env = &self.env;
+        let db_main = self.db_main;
+        let db_ttls = self.db_ttls;
+
+        let txn = env.begin_ro_txn().ok()?;
         let expires_at = txn
-            .get(self.db_ttls, &key)
+            .get(db_ttls, &key)
             .ok()
             .and_then(|d| d.try_into().ok().map(u64::from_le_bytes))
             .filter(|&ts| ts != 0);
 
         if expires_at.is_some_and(|ts| now_secs() > ts) {
-            return super::StorageResult::Expired;
+            return Some(StorageResult::Expired);
         }
 
-        let data = match txn.get(self.db_main, &key) {
-            Ok(d) => d,
-            Err(_) => return super::StorageResult::NotFound,
-        };
+        let data = txn.get(db_main, &key).ok()?;
+        let entry = CacheEntry::deserialize(py, data).ok().map(Arc::new)?;
 
-        Python::attach(|py| {
-            CacheEntry::deserialize(py, data)
-                .ok()
-                .map(Arc::new)
-                .map(|e| super::StorageResult::Hit(e, expires_at))
-                .unwrap_or(super::StorageResult::NotFound)
-        })
+        Some(StorageResult::Hit(entry, expires_at))
     }
 
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+    async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
         let data = Python::attach(|py| entry.serialize(py))?;
-        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
-        self.delete_from_index(&mut txn, &key);
-
-        let is_new = txn.get(self.db_main, &key).is_err();
-        let new_ts = now_nanos();
-
-        txn.put(self.db_main, &key, &data, WriteFlags::empty())
-            .map_err(Self::to_storage_is_full_err)?;
-        txn.put(
-            self.db_lru,
-            &key,
-            &new_ts.to_le_bytes(),
-            WriteFlags::empty(),
-        )
-        .map_err(Self::to_storage_is_full_err)?;
-        txn.put(
-            self.db_lru_index,
-            &Self::make_index_key(new_ts, &key),
-            &[],
-            WriteFlags::empty(),
-        )
-        .map_err(Self::to_storage_is_full_err)?;
-
-        if let Some(t) = ttl {
-            let expire_at = now_secs() + t;
-            txn.put(
-                self.db_ttls,
-                &key,
-                &expire_at.to_le_bytes(),
-                WriteFlags::empty(),
-            )
-            .map_err(Self::to_storage_is_full_err)?;
-        } else {
-            let _ = txn.del(self.db_ttls, &key, None);
-        }
-
-        if is_new {
-            let current_count = self.count.load(Ordering::SeqCst);
-            let new_count = current_count + 1;
-            txn.put(
-                self.db_meta,
-                b"count",
-                &(new_count as u64).to_le_bytes(),
-                WriteFlags::empty(),
-            )
-            .map_err(Self::to_storage_is_full_err)?;
-        }
-
-        txn.commit().map_err(Self::to_storage_is_full_err)?;
-
-        if is_new {
-            self.count.fetch_add(1, Ordering::SeqCst);
-        }
-        Ok(())
+        self.put_internal(&key, &data, ttl)
     }
 
-    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
-        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
-        self.delete_from_index(&mut txn, &key);
-
-        let is_new = txn.get(self.db_main, &key).is_err();
-        let new_ts = now_nanos();
-
-        txn.put(self.db_main, &key, &data, WriteFlags::empty())
-            .map_err(Self::to_storage_is_full_err)?;
-        txn.put(
-            self.db_lru,
-            &key,
-            &new_ts.to_le_bytes(),
-            WriteFlags::empty(),
-        )
-        .map_err(Self::to_storage_is_full_err)?;
-        txn.put(
-            self.db_lru_index,
-            &Self::make_index_key(new_ts, &key),
-            &[],
-            WriteFlags::empty(),
-        )
-        .map_err(Self::to_storage_is_full_err)?;
-
-        if let Some(t) = ttl {
-            let expire_at = now_secs() + t;
-            txn.put(
-                self.db_ttls,
-                &key,
-                &expire_at.to_le_bytes(),
-                WriteFlags::empty(),
-            )
-            .map_err(Self::to_storage_is_full_err)?;
-        } else {
-            let _ = txn.del(self.db_ttls, &key, None);
-        }
-
-        if is_new {
-            let current_count = self.count.load(Ordering::SeqCst);
-            let new_count = current_count + 1;
-            txn.put(
-                self.db_meta,
-                b"count",
-                &(new_count as u64).to_le_bytes(),
-                WriteFlags::empty(),
-            )
-            .map_err(Self::to_storage_is_full_err)?;
-        }
-
-        txn.commit().map_err(Self::to_storage_is_full_err)?;
-
-        if is_new {
-            self.count.fetch_add(1, Ordering::SeqCst);
-        }
-        Ok(())
+    async fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        self.put_internal(&key, &data, ttl)
     }
 
-    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
-        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
+    async fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
+        let env = &self.env;
+        let dbs = (
+            self.db_main,
+            self.db_ttls,
+            self.db_lru,
+            self.db_lru_index,
+            self.db_meta,
+        );
+
+        let mut txn = env.begin_rw_txn().map_err(to_runtime_err)?;
         let now_n = now_nanos();
         let now_s = now_secs();
         let now_le = now_n.to_le_bytes();
         for (key, ttl) in updates {
-            self.delete_from_index(&mut txn, &key);
+            Self::delete_from_index(&mut txn, dbs.2, dbs.3, &key);
 
-            txn.put(self.db_lru, &key, &now_le, WriteFlags::empty())
+            txn.put(dbs.2, &key, &now_le, WriteFlags::empty())
                 .map_err(Self::to_storage_is_full_err)?;
             txn.put(
-                self.db_lru_index,
+                dbs.3,
                 &Self::make_index_key(now_n, &key),
                 &[],
                 WriteFlags::empty(),
@@ -287,25 +257,31 @@ impl Storage for LmdbStorage {
 
             if let Some(t) = ttl {
                 let expire_at = now_s + t;
-                txn.put(
-                    self.db_ttls,
-                    &key,
-                    &expire_at.to_le_bytes(),
-                    WriteFlags::empty(),
-                )
-                .map_err(Self::to_storage_is_full_err)?;
+                txn.put(dbs.1, &key, &expire_at.to_le_bytes(), WriteFlags::empty())
+                    .map_err(Self::to_storage_is_full_err)?;
             }
         }
-        txn.commit().map_err(Self::to_storage_is_full_err)
+        txn.commit().map_err(Self::to_storage_is_full_err)?;
+        Ok(())
     }
 
-    fn remove(&self, key: &str) -> PyResult<()> {
-        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
-        if self.remove_internal(&mut txn, key) {
-            let current_count = self.count.load(Ordering::SeqCst);
+    async fn remove(&self, key: &str) -> PyResult<()> {
+        let env = &self.env;
+        let count_atom = &self.count;
+        let dbs = (
+            self.db_main,
+            self.db_ttls,
+            self.db_lru,
+            self.db_lru_index,
+            self.db_meta,
+        );
+
+        let mut txn = env.begin_rw_txn().map_err(to_runtime_err)?;
+        if Self::remove_internal(&mut txn, &(dbs.0, dbs.1, dbs.2, dbs.3), key) {
+            let current_count = count_atom.load(Ordering::SeqCst);
             let new_count = current_count.saturating_sub(1);
             txn.put(
-                self.db_meta,
+                dbs.4,
                 b"count",
                 &(new_count as u64).to_le_bytes(),
                 WriteFlags::empty(),
@@ -313,20 +289,30 @@ impl Storage for LmdbStorage {
             .map_err(Self::to_storage_is_full_err)?;
 
             txn.commit().map_err(Self::to_storage_is_full_err)?;
-            self.count.fetch_sub(1, Ordering::SeqCst);
+            count_atom.fetch_sub(1, Ordering::SeqCst);
         }
         Ok(())
     }
 
-    fn clear(&self) -> PyResult<()> {
-        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
-        let _ = txn.clear_db(self.db_main);
-        let _ = txn.clear_db(self.db_ttls);
-        let _ = txn.clear_db(self.db_lru);
-        let _ = txn.clear_db(self.db_lru_index);
-        let _ = txn.clear_db(self.db_meta);
+    async fn clear(&self) -> PyResult<()> {
+        let env = &self.env;
+        let count_atom = &self.count;
+        let dbs = (
+            self.db_main,
+            self.db_ttls,
+            self.db_lru,
+            self.db_lru_index,
+            self.db_meta,
+        );
+
+        let mut txn = env.begin_rw_txn().map_err(to_runtime_err)?;
+        let _ = txn.clear_db(dbs.0);
+        let _ = txn.clear_db(dbs.1);
+        let _ = txn.clear_db(dbs.2);
+        let _ = txn.clear_db(dbs.3);
+        let _ = txn.clear_db(dbs.4);
         txn.commit().map_err(Self::to_storage_is_full_err)?;
-        self.count.store(0, Ordering::SeqCst);
+        count_atom.store(0, Ordering::SeqCst);
         Ok(())
     }
 
@@ -334,14 +320,22 @@ impl Storage for LmdbStorage {
         self.count.load(Ordering::SeqCst)
     }
 
-    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
+    async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
+        let env = &self.env;
+        let count_atom = &self.count;
+        let dbs = (
+            self.db_main,
+            self.db_ttls,
+            self.db_lru,
+            self.db_lru_index,
+            self.db_meta,
+        );
+
         let mut to_evict = Vec::new();
 
-        let mut txn = self.env.begin_rw_txn().map_err(to_runtime_err)?;
+        let mut txn = env.begin_rw_txn().map_err(to_runtime_err)?;
         {
-            let mut cursor = txn
-                .open_ro_cursor(self.db_lru_index)
-                .map_err(to_runtime_err)?;
+            let mut cursor = txn.open_ro_cursor(dbs.3).map_err(to_runtime_err)?;
             for (k, _) in cursor.iter().take(count) {
                 if let Some(key_str) = k.get(8..).and_then(|b| std::str::from_utf8(b).ok()) {
                     to_evict.push(key_str.to_string());
@@ -351,15 +345,15 @@ impl Storage for LmdbStorage {
 
         let mut evicted_count = 0;
         for key in &to_evict {
-            if self.remove_internal(&mut txn, key) {
+            if Self::remove_internal(&mut txn, &(dbs.0, dbs.1, dbs.2, dbs.3), key) {
                 evicted_count += 1;
             }
         }
 
-        let current_count = self.count.load(Ordering::SeqCst);
+        let current_count = count_atom.load(Ordering::SeqCst);
         let new_count = current_count.saturating_sub(evicted_count);
         txn.put(
-            self.db_meta,
+            dbs.4,
             b"count",
             &(new_count as u64).to_le_bytes(),
             WriteFlags::empty(),
@@ -367,19 +361,22 @@ impl Storage for LmdbStorage {
         .map_err(Self::to_storage_is_full_err)?;
 
         txn.commit().map_err(Self::to_storage_is_full_err)?;
-        self.count.fetch_sub(evicted_count, Ordering::SeqCst);
+        count_atom.fetch_sub(evicted_count, Ordering::SeqCst);
 
         Ok(to_evict)
     }
 
-    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+    async fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+        let env = &self.env;
+        let dbs = (self.db_main, self.db_ttls);
+
         let mut results = Vec::new();
-        let txn = match self.env.begin_ro_txn() {
+        let txn = match env.begin_ro_txn() {
             Ok(t) => t,
             Err(_) => return results,
         };
 
-        let mut cursor = match txn.open_ro_cursor(self.db_main) {
+        let mut cursor = match txn.open_ro_cursor(dbs.0) {
             Ok(c) => c,
             Err(_) => return results,
         };
@@ -395,27 +392,87 @@ impl Storage for LmdbStorage {
                 continue;
             };
             if !key_str.starts_with(prefix) {
-                // Since LMDB keys are sorted, once we pass the prefix matches, we can stop.
                 if !prefix.is_empty() {
                     break;
                 }
                 continue;
             }
             let expires_at = txn
-                .get(self.db_ttls, &k)
+                .get(dbs.1, &k)
                 .ok()
                 .and_then(|d| d.try_into().ok().map(u64::from_le_bytes))
                 .filter(|&ts| ts != 0);
 
-            if expires_at.is_none_or(|ts| now_secs() <= ts) {
+            if expires_at.is_none() || now_secs() <= expires_at.unwrap() {
                 results.push((key_str.to_string(), expires_at));
             }
         }
-
         results
     }
 
     fn needs_tti_worker(&self) -> bool {
         true
+    }
+
+    fn try_set_sync(
+        &self,
+        py: Python,
+        key: String,
+        entry: Arc<CacheEntry>,
+        ttl: Option<u64>,
+    ) -> PyResult<()> {
+        let data = entry.serialize(py)?;
+        self.put_internal(&key, &data, ttl)
+    }
+
+    fn try_remove_sync(&self, key: &str) -> PyResult<()> {
+        let env = &self.env;
+        let count_atom = &self.count;
+        let dbs = (
+            self.db_main,
+            self.db_ttls,
+            self.db_lru,
+            self.db_lru_index,
+            self.db_meta,
+        );
+
+        let mut txn = env.begin_rw_txn().map_err(to_runtime_err)?;
+        if Self::remove_internal(&mut txn, &(dbs.0, dbs.1, dbs.2, dbs.3), key) {
+            let current_count = count_atom.load(Ordering::SeqCst);
+            let new_count = current_count.saturating_sub(1);
+            txn.put(
+                dbs.4,
+                b"count",
+                &(new_count as u64).to_le_bytes(),
+                WriteFlags::empty(),
+            )
+            .map_err(Self::to_storage_is_full_err)?;
+
+            txn.commit().map_err(Self::to_storage_is_full_err)?;
+            count_atom.fetch_sub(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    fn try_clear_sync(&self) -> PyResult<()> {
+        let env = &self.env;
+        let count_atom = &self.count;
+        let dbs = (
+            self.db_main,
+            self.db_ttls,
+            self.db_lru,
+            self.db_lru_index,
+            self.db_meta,
+        );
+
+        let mut txn = env.begin_rw_txn().map_err(to_runtime_err)?;
+        let _ = txn.clear_db(dbs.0);
+        let _ = txn.clear_db(dbs.1);
+        let _ = txn.clear_db(dbs.2);
+        let _ = txn.clear_db(dbs.3);
+        let _ = txn.clear_db(dbs.4);
+        txn.commit().map_err(Self::to_storage_is_full_err)?;
+        count_atom.store(0, Ordering::SeqCst);
+        Ok(())
     }
 }

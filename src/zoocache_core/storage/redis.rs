@@ -1,14 +1,17 @@
 use crate::utils::now_secs;
 use crate::utils::to_conn_err;
+use async_trait::async_trait;
 use pyo3::prelude::*;
-use r2d2::Pool;
-use redis::{Client, Commands};
+use redis::aio::MultiplexedConnection;
+use redis::{AsyncCommands, Client};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
-use super::{CacheEntry, Storage};
+use super::{CacheEntry, Storage, StorageResult};
 
 pub(crate) struct RedisStorage {
-    pool: Pool<Client>,
+    client: Client,
+    connection: Arc<RwLock<Option<MultiplexedConnection>>>,
     prefix: String,
     lru_update_interval: u64,
 }
@@ -32,15 +35,23 @@ impl RedisStorage {
         lru_update_interval: u64,
     ) -> Result<Self, redis::RedisError> {
         let client = Client::open(url)?;
-        let pool = Pool::builder()
-            .build(client)
-            .map_err(|e| redis::RedisError::from(std::io::Error::other(e)))?;
-
         Ok(Self {
-            pool,
+            client,
+            connection: Arc::new(RwLock::new(None)),
             prefix: prefix.unwrap_or("zoocache").to_string(),
             lru_update_interval,
         })
+    }
+
+    async fn get_conn(&self) -> Result<MultiplexedConnection, redis::RedisError> {
+        let mut conn_guard = self.connection.write().await;
+        if let Some(conn) = &*conn_guard {
+            return Ok(conn.clone());
+        }
+
+        let conn = self.client.get_multiplexed_async_connection().await?;
+        *conn_guard = Some(conn.clone());
+        Ok(conn)
     }
 
     fn full_key(&self, key: &str) -> String {
@@ -52,29 +63,32 @@ impl RedisStorage {
     }
 }
 
+#[async_trait]
 impl Storage for RedisStorage {
-    fn get(&self, key: &str) -> super::StorageResult {
-        let mut conn = match self.pool.get() {
+    async fn get(&self, key: &str) -> StorageResult {
+        let mut conn = match self.get_conn().await {
             Ok(c) => c,
-            Err(_) => return super::StorageResult::NotFound,
+            Err(_) => return StorageResult::NotFound,
         };
 
         let now = now_secs() as f64;
         let script = redis::Script::new(GET_AND_TOUCH_SCRIPT);
-        let (data, pttl): (Vec<u8>, i64) = match script
+        let res: Result<(Vec<u8>, i64), _> = script
             .key(self.full_key(key))
             .key(self.lru_key())
             .arg(now)
             .arg(key)
             .arg(self.lru_update_interval)
-            .invoke(&mut conn)
-        {
-            Ok(res) => res,
-            Err(_) => return super::StorageResult::NotFound,
+            .invoke_async(&mut conn)
+            .await;
+
+        let (data, pttl) = match res {
+            Ok(r) => r,
+            Err(_) => return StorageResult::NotFound,
         };
 
         if data.is_empty() {
-            return super::StorageResult::NotFound;
+            return StorageResult::NotFound;
         }
 
         match Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new)) {
@@ -84,21 +98,22 @@ impl Storage for RedisStorage {
                 } else {
                     None
                 };
-                super::StorageResult::Hit(entry, expires_at)
+                StorageResult::Hit(entry, expires_at)
             }
             None => {
                 let _: () = redis::pipe()
                     .del(self.full_key(key))
                     .zrem(self.lru_key(), key)
-                    .query(&mut conn)
+                    .query_async(&mut conn)
+                    .await
                     .unwrap_or_default();
-                super::StorageResult::NotFound
+                StorageResult::NotFound
             }
         }
     }
 
-    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
-        let mut conn = self.pool.get().map_err(to_conn_err)?;
+    async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+        let mut conn = self.get_conn().await.map_err(to_conn_err)?;
 
         if let Some(data) = Python::attach(|py| entry.serialize(py).ok()) {
             let full_key = self.full_key(&key);
@@ -109,13 +124,13 @@ impl Storage for RedisStorage {
                 None => pipe.set(&full_key, data),
             };
             pipe.zadd(self.lru_key(), &key, now_secs() as f64);
-            let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
+            let _: () = pipe.query_async(&mut conn).await.map_err(to_conn_err)?;
         }
         Ok(())
     }
 
-    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
-        let mut conn = self.pool.get().map_err(to_conn_err)?;
+    async fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        let mut conn = self.get_conn().await.map_err(to_conn_err)?;
         let full_key = self.full_key(&key);
         let mut pipe = redis::pipe();
 
@@ -124,12 +139,12 @@ impl Storage for RedisStorage {
             None => pipe.set(&full_key, data),
         };
         pipe.zadd(self.lru_key(), &key, now_secs() as f64);
-        let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
+        let _: () = pipe.query_async(&mut conn).await.map_err(to_conn_err)?;
         Ok(())
     }
 
-    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
-        let mut conn = self.pool.get().map_err(to_conn_err)?;
+    async fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
+        let mut conn = self.get_conn().await.map_err(to_conn_err)?;
         let now = now_secs() as f64;
         let mut pipe = redis::pipe();
 
@@ -139,22 +154,23 @@ impl Storage for RedisStorage {
             }
             pipe.zadd(self.lru_key(), &key, now);
         }
-        let _: () = pipe.query(&mut conn).map_err(to_conn_err)?;
+        let _: () = pipe.query_async(&mut conn).await.map_err(to_conn_err)?;
         Ok(())
     }
 
-    fn remove(&self, key: &str) -> PyResult<()> {
-        let mut conn = self.pool.get().map_err(to_conn_err)?;
+    async fn remove(&self, key: &str) -> PyResult<()> {
+        let mut conn = self.get_conn().await.map_err(to_conn_err)?;
         let _: () = redis::pipe()
             .del(self.full_key(key))
             .zrem(self.lru_key(), key)
-            .query(&mut conn)
+            .query_async(&mut conn)
+            .await
             .map_err(to_conn_err)?;
         Ok(())
     }
 
-    fn clear(&self) -> PyResult<()> {
-        let mut conn = self.pool.get().map_err(to_conn_err)?;
+    async fn clear(&self) -> PyResult<()> {
+        let mut conn = self.get_conn().await.map_err(to_conn_err)?;
         let pattern = format!("{}:*", self.prefix);
         let mut cursor: u64 = 0;
 
@@ -165,13 +181,14 @@ impl Storage for RedisStorage {
                 .arg(&pattern)
                 .arg("COUNT")
                 .arg(500)
-                .query(&mut conn);
+                .query_async(&mut conn)
+                .await;
 
             match res {
                 Ok((next_cursor, keys)) => {
                     if !keys.is_empty() {
                         let _: redis::RedisResult<()> =
-                            redis::cmd("UNLINK").arg(&keys).query(&mut conn);
+                            redis::cmd("UNLINK").arg(&keys).query_async(&mut conn).await;
                     }
                     cursor = next_cursor;
                     if cursor == 0 {
@@ -185,18 +202,27 @@ impl Storage for RedisStorage {
     }
 
     fn len(&self) -> usize {
-        let Ok(mut conn) = self.pool.get() else {
-            return 0;
-        };
-        let count: redis::RedisResult<usize> = conn.zcard(self.lru_key());
-        count.unwrap_or(0)
+        // ZCARD is fast, we could block briefly here given len() is rarely used in hot paths
+        // and usually from non-async contexts in our current Core design.
+        // However, for consistency, we'll use a block_on or rethink if we need len() to be async.
+        // For now, let's use a simplified approach since len() is used for eviction checks.
+        let client = self.client.clone();
+        match client.get_connection() {
+            Ok(mut conn) => {
+                let count: redis::RedisResult<usize> =
+                    redis::Commands::zcard(&mut conn, self.lru_key());
+                count.unwrap_or(0)
+            }
+            Err(_) => 0,
+        }
     }
 
-    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
-        let mut conn = self.pool.get().map_err(to_conn_err)?;
+    async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
+        let mut conn = self.get_conn().await.map_err(to_conn_err)?;
 
         let items: Vec<(String, f64)> = conn
             .zpopmin(self.lru_key(), count as isize)
+            .await
             .unwrap_or_default();
 
         let to_evict: Vec<String> = items.into_iter().map(|(k, _)| k).collect();
@@ -205,16 +231,17 @@ impl Storage for RedisStorage {
             let full_keys: Vec<String> = to_evict.iter().map(|k| self.full_key(k)).collect();
             let _: () = redis::pipe()
                 .del(&full_keys)
-                .query(&mut conn)
+                .query_async(&mut conn)
+                .await
                 .map_err(to_conn_err)?;
         }
 
         Ok(to_evict)
     }
 
-    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+    async fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
         let mut results = Vec::new();
-        let mut conn = match self.pool.get() {
+        let mut conn = match self.get_conn().await {
             Ok(c) => c,
             Err(_) => return results,
         };
@@ -229,7 +256,8 @@ impl Storage for RedisStorage {
                 .arg(&pattern)
                 .arg("COUNT")
                 .arg(500)
-                .query(&mut conn);
+                .query_async(&mut conn)
+                .await;
 
             match res {
                 Ok((next_cursor, keys)) => {
@@ -239,7 +267,7 @@ impl Storage for RedisStorage {
                             pipe.cmd("PTTL").arg(k);
                         }
 
-                        if let Ok(pttls) = pipe.query::<Vec<i64>>(&mut conn) {
+                        if let Ok(pttls) = pipe.query_async::<Vec<i64>>(&mut conn).await {
                             for (full_key, pttl) in keys.into_iter().zip(pttls.into_iter()) {
                                 if pttl == -2 {
                                     continue;
