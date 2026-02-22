@@ -414,4 +414,8 @@ impl Storage for LmdbStorage {
 
         results
     }
+
+    fn needs_tti_worker(&self) -> bool {
+        true
+    }
 }
