@@ -104,10 +104,13 @@ configure(
 | `prefix` | `str` | `None` | Namespace prefix for keys and channels |
 | `default_ttl` | `int` | `None` | Default TTL/TTI in seconds |
 | `read_extend_ttl` | `bool` | `True` | If `True`, reading extends TTL (TTI mode) |
-| `auto_prune_secs` | `int` | `3600` | Age (secs) for background pruning |
+| `max_entries` | `int` | `None` | Max number of entries in storage (if supported) |
+| `lmdb_map_size` | `int` | `None` | Max DB size for LMDB (bytes). Default 1GB |
+| `auto_prune_secs` | `int` | `None` | Age (secs) for background pruning. `None` = disabled |
 | `auto_prune_interval` | `int` | `3600` | Interval (secs) for background pruning worker |
 | `lru_update_interval`| `int` | `30` | Min seconds between LRU updates per key |
 | `prune_after` | `int` | `None` | Reactive prune every 1000 ops (age in secs) |
+
 
 ---
 

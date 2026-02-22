@@ -20,7 +20,7 @@ To use the Django ORM adapter, install ZooCache with the `django` extra:
 
 Using `uv` (recommended):
 ```bash
-uv add zoocache
+uv add "zoocache[django]"
 ```
 
 Using `pip`:
