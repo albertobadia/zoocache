@@ -1,5 +1,6 @@
-import asyncio
 import logging
+import threading
+import time
 from collections import defaultdict
 
 from zoocache._zoocache import Core
@@ -14,36 +15,30 @@ class RedisTelemetryAdapter(TelemetryAdapter):
         self.flush_interval = flush_interval
 
         self._counters: dict[str, float] = defaultdict(float)
-        self._flush_task: asyncio.Task | None = None
-        self._start_flush_task()
+        self._lock = threading.Lock()
+        self._shutdown_event = threading.Event()
+        self._flush_thread = threading.Thread(target=self._flush_loop, daemon=True)
+        self._flush_thread.start()
 
-    def _start_flush_task(self) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-
-        if self._flush_task is None or self._flush_task.done():
-            self._flush_task = loop.create_task(self._flush_loop())
-
-    async def _flush_loop(self) -> None:
-        while True:
-            await asyncio.sleep(self.flush_interval)
+    def _flush_loop(self) -> None:
+        while not self._shutdown_event.is_set():
+            time.sleep(self.flush_interval)
             self._flush()
 
     def _flush(self) -> None:
-        if not self._counters:
-            return
-
-        snapshot = self._counters
-        self._counters = defaultdict(float)
+        with self._lock:
+            if not self._counters:
+                return
+            snapshot = self._counters
+            self._counters = defaultdict(float)
 
         try:
             self.core.flush_metrics(snapshot)
         except Exception as e:
             logger.debug(f"Failed to flush metrics to Redis: {e}")
-            for key, value in snapshot.items():
-                self._counters[key] += value
+            with self._lock:
+                for key, value in snapshot.items():
+                    self._counters[key] += value
 
     def _build_metric_name(self, name: str, labels: dict[str, str] | None) -> str:
         if not labels:
@@ -51,27 +46,23 @@ class RedisTelemetryAdapter(TelemetryAdapter):
         label_str = "_".join(f"{v}" for k, v in sorted(labels.items()))
         return f"{name}_{label_str}"
 
-    def _trigger_flush(self) -> None:
-        try:
-            asyncio.get_running_loop()
-            self._start_flush_task()
-        except RuntimeError:
-            self._flush()
-
     def increment(self, name: str, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
         metric_name = self._build_metric_name(name, labels)
-        self._counters[metric_name] += value
-        self._trigger_flush()
+        with self._lock:
+            self._counters[metric_name] += value
 
     def observe(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
-        self._counters[self._build_metric_name(f"{name}_sum", labels)] += value
-        self._counters[self._build_metric_name(f"{name}_count", labels)] += 1.0
-        self._trigger_flush()
+        sum_name = self._build_metric_name(f"{name}_sum", labels)
+        count_name = self._build_metric_name(f"{name}_count", labels)
+        with self._lock:
+            self._counters[sum_name] += value
+            self._counters[count_name] += 1.0
 
     def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         pass
 
     def close(self) -> None:
-        if self._flush_task and not self._flush_task.done():
-            self._flush_task.cancel()
+        self._shutdown_event.set()
+        if self._flush_thread.is_alive():
+            self._flush_thread.join(timeout=2.0)
         self._flush()
