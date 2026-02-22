@@ -2,6 +2,7 @@ import asyncio
 import functools
 import inspect
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -20,6 +21,7 @@ class CacheManager:
         self._telemetry: TelemetryManager = TelemetryManager()
         self._last_tti_dropped: int = 0
         self._last_silent_errors: int = 0
+        self._last_telemetry_check: float = 0
         self._lock = threading.Lock()
 
     @property
@@ -46,12 +48,21 @@ class CacheManager:
             return self.core
 
     def check_telemetry(self) -> None:
-        if self.core:
-            current_dropped = self.core.tti_dropped_messages()
-            if current_dropped > self._last_tti_dropped:
-                delta = current_dropped - self._last_tti_dropped
-                self.telemetry.increment("cache_tti_overflows_total", delta)
-                self._last_tti_dropped = current_dropped
+        now = time.monotonic()
+        if now - self._last_telemetry_check < 1.0:
+            return
+
+        with self._lock:
+            # Re-check after acquiring lock to avoid race conditions
+            if now - self._last_telemetry_check < 1.0:
+                return
+            self._last_telemetry_check = now
+            if self.core:
+                current_dropped = self.core.tti_dropped_messages()
+                if current_dropped > self._last_tti_dropped:
+                    delta = current_dropped - self._last_tti_dropped
+                    self.telemetry.increment("cache_tti_overflows_total", delta)
+                    self._last_tti_dropped = current_dropped
 
             current_silent = self.core.silent_errors()
             if current_silent > self._last_silent_errors:
@@ -80,7 +91,7 @@ def configure(
     max_entries: int | None = None,
     lmdb_map_size: int | None = None,
     flight_timeout: int = 60,
-    tti_flush_secs: int = 5,
+    tti_flush_secs: int = 30,
     auto_prune_secs: int | None = None,
     auto_prune_interval: int = 3600,
     lru_update_interval: int = 30,
@@ -206,14 +217,19 @@ def cacheable(
             _manager.check_telemetry()
 
             while True:
-                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+                if _manager.telemetry.enabled:
+                    with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+                        val, is_leader, is_hit = await core.get_or_entry_async(key)
+                else:
                     val, is_leader, is_hit = await core.get_or_entry_async(key)
 
                 if is_hit:
-                    _manager.telemetry.increment("cache_hits_total")
+                    if _manager.telemetry.enabled:
+                        _manager.telemetry.increment("cache_hits_total")
                     return val
 
-                _manager.telemetry.increment("cache_misses_total")
+                if _manager.telemetry.enabled:
+                    _manager.telemetry.increment("cache_misses_total")
                 if is_leader:
                     break
 
@@ -223,7 +239,10 @@ def cacheable(
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
-                    with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                    if _manager.telemetry.enabled:
+                        with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                            await core.set_async(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                    else:
                         await core.set_async(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 success = True
                 return res
@@ -239,13 +258,19 @@ def cacheable(
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
             _manager.check_telemetry()
 
-            with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+            if _manager.telemetry.enabled:
+                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+                    val, is_leader, is_hit = core.get_or_entry(key)
+            else:
                 val, is_leader, is_hit = core.get_or_entry(key)
+
             if is_hit:
-                _manager.telemetry.increment("cache_hits_total")
+                if _manager.telemetry.enabled:
+                    _manager.telemetry.increment("cache_hits_total")
                 return val
 
-            _manager.telemetry.increment("cache_misses_total")
+            if _manager.telemetry.enabled:
+                _manager.telemetry.increment("cache_misses_total")
 
             if not is_leader:
                 return fn(*args, **kwargs)
@@ -255,7 +280,10 @@ def cacheable(
             try:
                 with DepsTracker():
                     res = fn(*args, **kwargs)
-                    with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                    if _manager.telemetry.enabled:
+                        with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                            core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
+                    else:
                         core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 success = True
                 return res

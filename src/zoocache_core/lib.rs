@@ -284,43 +284,42 @@ impl Core {
                             last_auto_prune = now;
                         }
 
-                        flight::cleanup_stale_flights(&flights_worker, flight_timeout_val);
+                        if now.duration_since(last_heartbeat) > Duration::from_secs(1) {
+                            flight::cleanup_stale_flights(&flights_worker, flight_timeout_val);
 
-                        if bus_is_remote
-                            && now.duration_since(last_heartbeat) > Duration::from_secs(1)
-                        {
-                            sys.refresh_cpu_usage();
-                            sys.refresh_memory();
-                            let cpu_percent = sys.global_cpu_usage();
-                            let ram_used = sys.used_memory() as f64;
-                            let ram_total = sys.total_memory() as f64;
-                            let ram_percent = if ram_total > 0.0 {
-                                (ram_used / ram_total) * 100.0
-                            } else {
-                                0.0
-                            };
-                            let hostname = sysinfo::System::host_name()
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let uptime = sysinfo::System::uptime();
+                            if bus_is_remote {
+                                sys.refresh_cpu_usage();
+                                sys.refresh_memory();
+                                let cpu_percent = sys.global_cpu_usage();
+                                let ram_used = sys.used_memory() as f64;
+                                let ram_total = sys.total_memory() as f64;
+                                let ram_percent = if ram_total > 0.0 {
+                                    (ram_used / ram_total) * 100.0
+                                } else {
+                                    0.0
+                                };
+                                let hostname = sysinfo::System::host_name()
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let uptime = sysinfo::System::uptime();
 
-                            let payload = serde_json::json!({
-                                "uuid": node_id_worker,
-                                "hostname": hostname,
-                                "cpu": cpu_percent,
-                                "ram": ram_percent,
-                                "uptime": uptime,
-                                "metrics": local_metrics,
-                            });
+                                let payload = serde_json::json!({
+                                    "uuid": node_id_worker,
+                                    "hostname": hostname,
+                                    "cpu": cpu_percent,
+                                    "ram": ram_percent,
+                                    "uptime": uptime,
+                                    "metrics": local_metrics,
+                                });
 
-                            if let Ok(json_str) = serde_json::to_string(&payload)
-                                && bus_worker
-                                    .push_heartbeat(&node_id_worker, &json_str, 5)
-                                    .await
-                                    .is_err()
-                            {
-                                silent_errors_worker.fetch_add(1, Ordering::Relaxed);
+                                if let Ok(json_str) = serde_json::to_string(&payload)
+                                    && bus_worker
+                                        .push_heartbeat(&node_id_worker, &json_str, 5)
+                                        .await
+                                        .is_err()
+                                {
+                                    silent_errors_worker.fetch_add(1, Ordering::Relaxed);
+                                }
                             }
-
                             last_heartbeat = now;
                         }
                     }
