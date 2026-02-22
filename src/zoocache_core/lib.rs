@@ -127,7 +127,8 @@ impl Core {
                 bus_is_remote = true;
                 let channel = prefix.map(|p| format!("{}:invalidate", p));
                 let r_bus = Arc::new(
-                    RedisPubSubBus::new(url, channel.as_deref(), prefix).map_err(to_conn_err)?,
+                    RedisPubSubBus::new(url, channel.as_deref(), prefix, node_id)
+                        .map_err(to_conn_err)?,
                 );
 
                 let t_clone = trie.clone();
