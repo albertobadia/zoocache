@@ -284,7 +284,6 @@ impl Core {
                             last_auto_prune = now;
                         }
 
-                        // Cleanup stale flights
                         flight::cleanup_stale_flights(&flights_worker, flight_timeout_val);
 
                         if bus_is_remote
@@ -313,14 +312,13 @@ impl Core {
                                 "metrics": local_metrics,
                             });
 
-                            if let Ok(json_str) = serde_json::to_string(&payload) {
-                                if bus_worker
+                            if let Ok(json_str) = serde_json::to_string(&payload)
+                                && bus_worker
                                     .push_heartbeat(&node_id_worker, &json_str, 5)
                                     .await
                                     .is_err()
-                                {
-                                    silent_errors_worker.fetch_add(1, Ordering::Relaxed);
-                                }
+                            {
+                                silent_errors_worker.fetch_add(1, Ordering::Relaxed);
                             }
 
                             last_heartbeat = now;

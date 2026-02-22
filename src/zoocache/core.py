@@ -241,12 +241,12 @@ def cacheable(
 
             with _manager.telemetry.time_operation("cache_get_duration_seconds"):
                 val, is_leader, is_hit = core.get_or_entry(key)
-
             if is_hit:
                 _manager.telemetry.increment("cache_hits_total")
                 return val
 
             _manager.telemetry.increment("cache_misses_total")
+
             if not is_leader:
                 return fn(*args, **kwargs)
 

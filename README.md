@@ -43,7 +43,6 @@
 
 Zoocache is continuously benchmarked to ensure zero performance regressions. We track micro-latency, scaling with dependencies, and storage overhead.
 
-<!-- PERFORMANCE-CHART:START -->
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="benchmarks/reports/comparison-dark.svg">
@@ -61,7 +60,17 @@ The benchmark results reflect ZooCache's specific architectural choices:
 - **Pub/Sub Bus**: Using Redis Pub/Sub for the invalidation bus enables low-latency propagation of invalidation signals across multiple nodes, typically completing in under 1ms.
 
 > **Note**: Benchmark scale: 5,000 operations. Redis is running on **localhost** (loopback) to eliminate network latency interference and focus on internal engine overhead. ZooCache maintains O(1) tagging overhead and scales linearly. Latency values represent the end-to-end operation time including storage overhead.
-<!-- PERFORMANCE-CHART:END -->
+
+---
+
+## ⚖️ Comparison
+
+| Feature | **🐾 Zoocache** | **🔴 Redis (Raw)** | **🐶 Dogpile** | **diskcache** |
+| :--- | :--- | :--- | :--- | :--- |
+| **Invalidation** | 🧠 **Semantic (Trie)** | 🔧 Manual | 🔧 Manual | ⏳ TTL |
+| **Consistency** | 🛡️ **Causal (HLC)** | ❌ Eventual | ❌ No | ❌ No |
+| **Anti-Avalanche** | ✅ **Native** | ❌ No | ✅ Yes (Locks) | ❌ No |
+| **Performance** | 🚀 **Very High** | 🏎️ High | 🐢 Medium | 🐢 Medium |
 
 ---
 

@@ -61,7 +61,6 @@ pub(crate) fn complete_flight(
 pub(crate) async fn wait_for_flight(flight: &Arc<Flight>, timeout_secs: u64) -> FlightStatus {
     let timeout = std::time::Duration::from_secs(timeout_secs);
 
-    // Check if already done
     {
         let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.0 != FlightStatus::Pending {
@@ -93,7 +92,6 @@ pub(crate) fn cleanup_stale_flights(
             let flight = entry.value();
             let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
 
-            // Only remove pending flights that have exceeded the timeout
             if state.0 == FlightStatus::Pending && flight.created_at.elapsed() > timeout {
                 Some(entry.key().clone())
             } else {
@@ -104,7 +102,6 @@ pub(crate) fn cleanup_stale_flights(
 
     for key in to_remove {
         if let Some((_, flight)) = flights.remove(&key) {
-            // Notify any waiters that this flight was abandoned
             let mut state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
             state.0 = FlightStatus::Error;
             flight.notify.notify_waiters();

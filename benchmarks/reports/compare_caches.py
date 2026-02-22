@@ -15,7 +15,6 @@ from zoocache import (
     configure,
     get as zc_get,
     get_async as zc_get_async,
-    get_tag_version,
     invalidate as zc_inv,
     invalidate_async as zc_inv_async,
     reset as zc_reset,
@@ -119,30 +118,30 @@ def bench_diskcache():
 async def bench_zoocache_propagation():
     """
     Measure real invalidation propagation latency between two ZooCache nodes.
-    
+
     This benchmark creates two separate nodes connected to the same Redis:
     - Node 1 (primary): Performs invalidations
     - Node 2 (secondary): Receives invalidations via Redis pub/sub
-    
+
     Measures the time from invalidation on Node 1 until Node 2 receives it.
     """
     zc_reset()
-    
+
     # Node 1: Primary node that performs invalidations
     configure(storage_url=REDIS_URL, bus_url=REDIS_URL, prefix="bench_prop")
     await zc_clear_async()
-    
+
     # Node 2: Secondary node that only receives invalidations
     node2 = Core(storage_url=REDIS_URL, bus_url=REDIS_URL, prefix="bench_prop", node_id="node2")
-    
+
     # Wait for node2's Redis subscriber to be ready
     await asyncio.sleep(0.5)
-    
+
     # Warm up both nodes and verify propagation works
     for i in range(100):
         await zc_set_async(f"warm_{i}", b"1")
         await zc_get_async(f"warm_{i}")
-    
+
     # Verify propagation is working before measuring
     test_tag = "test_propagation_verify"
     initial = node2.get_tag_version(test_tag)
@@ -152,24 +151,24 @@ async def bench_zoocache_propagation():
     print(f"  Propagation verify: {initial} -> {final}")
     if final == initial:
         print("  WARNING: Propagation not working, Redis pub/sub may not be connected")
-    
+
     propagation_times = []
-    
+
     for iteration in range(3):
         await zc_clear_async()
-        
+
         # Write items with tag
         for i in range(NUM_ITEMS):
             await zc_set_async(f"zc_{i}", b"val", deps=[TAG])
-        
+
         # Get initial version on node 2
         initial_version = node2.get_tag_version(TAG)
         print(f"  Iteration {iteration + 1}: Initial version on node2 = {initial_version}")
-        
+
         # Invalidate on node 1 and measure propagation to node 2
         t0 = time.perf_counter()
         await zc_inv_async(TAG)
-        
+
         # Poll node 2 until it receives the invalidation (with timeout)
         timeout_secs = 5.0
         while True:
@@ -177,16 +176,16 @@ async def bench_zoocache_propagation():
             if current_version > initial_version:
                 elapsed = (time.perf_counter() - t0) * 1000
                 propagation_times.append(elapsed)
-                print(f"  Iteration {iteration + 1}: Received! {initial_version} -> {current_version} in {elapsed:.2f}ms")
+                print(
+                    f"  Iteration {iteration + 1}: Received! {initial_version} -> {current_version} in {elapsed:.2f}ms"
+                )
                 break
             if (time.perf_counter() - t0) > timeout_secs:
                 propagation_times.append(timeout_secs * 1000)  # Timeout
                 print(f"  Iteration {iteration + 1}: TIMEOUT after {timeout_secs}s")
                 break
             await asyncio.sleep(0.0001)  # 0.1ms polling interval
-    
-    return sum(propagation_times) / len(propagation_times)
-    
+
     return sum(propagation_times) / len(propagation_times)
 
 
@@ -431,7 +430,7 @@ def main():
     print("\nBenchmark Complete.")
     for k, v in results.items():
         print(f"{k}: W={v[0]:.2f}ms, R={v[1]:.2f}ms, I={v[2]:.2f}ms")
-    
+
     if propagation_result is not None:
         print(f"\nZooCache Redis Propagation Latency: {propagation_result:.2f}ms")
         print("  (Time from invalidation on Node 1 until received on Node 2 via Redis pub/sub)")

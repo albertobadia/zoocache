@@ -119,15 +119,12 @@ impl RedisPubSubBus {
                             let prefix_str = prefix.trim();
                             let req_id_str = req_id.trim();
 
-                            if let Some(reply_json) = inspect_cb(prefix_str, req_id_str) {
-                                // For reply, we need another connection
-                                if let Ok(mut reply_conn) =
+                            if let Some(reply_json) = inspect_cb(prefix_str, req_id_str)
+                                && let Ok(mut reply_conn) =
                                     client.get_multiplexed_async_connection().await
-                                {
-                                    let _: Result<(), redis::RedisError> = reply_conn
-                                        .publish(&inspect_reply_channel, reply_json)
-                                        .await;
-                                }
+                            {
+                                let _: Result<(), redis::RedisError> =
+                                    reply_conn.publish(&inspect_reply_channel, reply_json).await;
                             }
                         }
                     } else if let Some((tag, ver_str)) = payload.rsplit_once('|')
