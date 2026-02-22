@@ -15,6 +15,32 @@ HelpScreen {
     border: solid #e8e2c7;
 }
 
+InspectScreen {
+    align: center middle;
+}
+
+#inspect-dialog {
+    padding: 1 2;
+    width: 80;
+    height: auto;
+    border: solid #c8c2a7;
+    background: #111111;
+    color: #c8c2a7;
+}
+
+#inspect-dialog:focus, #inspect-dialog:focus-within {
+    border: solid #e8e2c7;
+}
+
+#inspect-input {
+    margin-bottom: 1;
+}
+
+#inspect-results {
+    height: 10;
+    margin-bottom: 1;
+}
+
 Screen {
     layout: horizontal;
     background: #26201b;

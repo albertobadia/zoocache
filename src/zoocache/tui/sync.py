@@ -20,17 +20,12 @@ class ClusterSynchronizer:
         self.node_metric_state: dict[str, dict[str, float]] = {}
         self._initialized = False
 
-    async def get_pubsub_events(self) -> list[tuple[str, str]]:
+    async def get_pubsub_events(self) -> list[dict[str, Any]]:
         events = []
         try:
             message = await self.pubsub.get_message(ignore_subscribe_messages=True)
             if message:
-                events.append(
-                    (
-                        "Cluster Event: Invalidation Broadcast",
-                        f"Detected invalidation pulse. Raw payload: {message['data']}",
-                    )
-                )
+                events.append(message)
         except Exception:
             pass
         return events

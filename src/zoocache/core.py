@@ -115,6 +115,7 @@ def clear() -> None:
 def invalidate(tag: str) -> None:
     _manager.get_core().invalidate(tag)
     if _manager.telemetry.enabled:
+        _manager.telemetry.increment("cache_invalidations_total")
         _manager.telemetry.increment("cache_invalidations_total", labels={"tag_prefix": tag})
 
 
@@ -221,6 +222,7 @@ def cacheable(
                     leader_fut.set_result(res)
                 return res
             except BaseException as e:
+                _manager.telemetry.increment("cache_errors_total")
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 if not leader_fut.done():
                     leader_fut.set_exception(e)

@@ -91,4 +91,19 @@ impl Storage for InMemoryStorage {
 
         Ok(to_evict)
     }
+
+    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+        let mut results = Vec::new();
+        for entry in self.map.iter() {
+            let key = entry.key();
+            if key.starts_with(prefix) {
+                let (_, expires_at, _) = entry.value();
+                let is_expired = expires_at.is_some_and(|expires| now_secs() > expires);
+                if !is_expired {
+                    results.push((key.clone(), *expires_at));
+                }
+            }
+        }
+        results
+    }
 }

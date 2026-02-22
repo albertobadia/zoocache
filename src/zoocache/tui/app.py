@@ -1,10 +1,12 @@
+import json
+
 import redis.asyncio as redis
 from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.widgets import Footer, Header, Input, Static
 
 from zoocache.tui.commands import CommandHandler
-from zoocache.tui.screens import HelpScreen
+from zoocache.tui.screens import HelpScreen, InspectScreen
 from zoocache.tui.sync import ClusterSynchronizer
 from zoocache.tui.widgets import EventLog, MetricDisplay, NodeCard
 
@@ -16,6 +18,7 @@ class ZooCacheCLI(App):
         ("q", "quit", "Quit"),
         ("ctrl+c", "double_quit", "Quit"),
         ("c", "clear_logs", "Clear Logs"),
+        ("i", "inspect_key", "Inspect Key"),
         ("h", "toggle_help", "Help"),
     ]
 
@@ -42,6 +45,14 @@ class ZooCacheCLI(App):
 
     def action_toggle_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def action_inspect_key(self) -> None:
+        self.push_screen(InspectScreen())
+
+    async def send_inspect_request(self, key: str, req_id: str) -> None:
+        # Backend expects "key|req_id" and uses rsplit_once('|')
+        payload = f"{key}|{req_id}"
+        await self.redis_client.publish(f"{self.prefix}:inspect:request", payload)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -84,8 +95,12 @@ class ZooCacheCLI(App):
         self.event_log.log_event(
             "PubSub Active: Monitoring Invalidation Channel", f"Subscribed to cluster channel: {self.prefix}:invalidate"
         )
+        self.event_log.log_event(
+            "PubSub Active: Monitoring Inspect Reply Channel",
+            f"Subscribed to cluster channel: {self.prefix}:inspect:reply",
+        )
 
-        await self.pubsub.subscribe(f"{self.prefix}:invalidate")
+        await self.pubsub.subscribe(f"{self.prefix}:invalidate", f"{self.prefix}:inspect:reply")
         self.set_interval(0.1, self.check_pubsub)
         self.set_interval(1.0, self.refresh_ui_state)
 
@@ -125,8 +140,30 @@ class ZooCacheCLI(App):
 
     async def check_pubsub(self) -> None:
         events = await self.syncer.get_pubsub_events()
-        for summary, details in events:
-            self.event_log.log_event(summary, details)
+        for msg in events:
+            channel = msg["channel"]
+            data = msg["data"]
+
+            if channel == f"{self.prefix}:invalidate":
+                self.event_log.log_event(
+                    "Cluster Event: Invalidation Broadcast",
+                    f"Detected invalidation pulse. Raw payload: {data}",
+                )
+            elif channel == f"{self.prefix}:inspect:reply":
+                try:
+                    payload = json.loads(data)
+                    node_id = payload.get("node_id", "unknown")
+                    keys = payload.get("keys", [])
+                    req_id = payload.get("req_id")
+
+                    is_inspect = isinstance(self.screen, InspectScreen)
+                    has_req_id = hasattr(self.screen, "current_req_id")
+                    
+                    if is_inspect and has_req_id and self.screen.current_req_id == req_id:
+                        self.screen.add_result(node_id, keys)
+                except Exception as e:
+                    if isinstance(self.screen, InspectScreen):
+                        self.screen.add_result("unknown", [], error=str(e))
 
     async def on_input_submitted(self, message: Input.Submitted) -> None:
         cmd_str = message.value.strip()

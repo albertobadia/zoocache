@@ -362,4 +362,47 @@ impl Storage for LmdbStorage {
 
         Ok(to_evict)
     }
+
+    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+        let mut results = Vec::new();
+        let txn = match self.env.begin_ro_txn() {
+            Ok(t) => t,
+            Err(_) => return results,
+        };
+
+        let mut cursor = match txn.open_ro_cursor(self.db_main) {
+            Ok(c) => c,
+            Err(_) => return results,
+        };
+
+        let iter = if prefix.is_empty() {
+            cursor.iter()
+        } else {
+            cursor.iter_from(prefix.as_bytes())
+        };
+
+        for (k, _) in iter {
+            let Ok(key_str) = std::str::from_utf8(k) else {
+                continue;
+            };
+            if !key_str.starts_with(prefix) {
+                // Since LMDB keys are sorted, once we pass the prefix matches, we can stop.
+                if !prefix.is_empty() {
+                    break;
+                }
+                continue;
+            }
+            let expires_at = txn
+                .get(self.db_ttls, &k)
+                .ok()
+                .and_then(|d| d.try_into().ok().map(u64::from_le_bytes))
+                .filter(|&ts| ts != 0);
+
+            if !expires_at.is_some_and(|ts| now_secs() > ts) {
+                results.push((key_str.to_string(), expires_at));
+            }
+        }
+
+        results
+    }
 }

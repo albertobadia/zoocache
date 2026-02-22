@@ -77,8 +77,7 @@ impl Storage for RedisStorage {
             return super::StorageResult::NotFound;
         }
 
-        let result = Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new));
-        match result {
+        match Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new)) {
             Some(entry) => {
                 let expires_at = if pttl > 0 {
                     Some(now_secs() + (pttl as u64 / 1000))
@@ -211,5 +210,65 @@ impl Storage for RedisStorage {
         }
 
         Ok(to_evict)
+    }
+
+    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+        let mut results = Vec::new();
+        let mut conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(_) => return results,
+        };
+
+        let pattern = format!("{}:{}*", self.prefix, prefix);
+        let mut cursor: u64 = 0;
+
+        loop {
+            let res: Result<(u64, Vec<String>), _> = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(500)
+                .query(&mut conn);
+
+            match res {
+                Ok((next_cursor, keys)) => {
+                    if !keys.is_empty() {
+                        let mut pipe = redis::pipe();
+                        for k in &keys {
+                            pipe.cmd("PTTL").arg(k);
+                        }
+
+                        if let Ok(pttls) = pipe.query::<Vec<i64>>(&mut conn) {
+                            for (full_key, pttl) in keys.into_iter().zip(pttls.into_iter()) {
+                                if pttl == -2 {
+                                    continue;
+                                }
+
+                                let original_key = full_key
+                                    .strip_prefix(&format!("{}:", self.prefix))
+                                    .unwrap_or(&full_key)
+                                    .to_string();
+
+                                let expires_at = if pttl > 0 {
+                                    Some(now_secs() + (pttl as u64 / 1000))
+                                } else {
+                                    None
+                                };
+
+                                results.push((original_key, expires_at));
+                            }
+                        }
+                    }
+                    cursor = next_cursor;
+                    if cursor == 0 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        results
     }
 }
