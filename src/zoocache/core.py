@@ -69,7 +69,7 @@ def configure(
     max_entries: int | None = None,
     lmdb_map_size: int | None = None,
     flight_timeout: int = 60,
-    tti_flush_secs: int = 30,
+    tti_flush_secs: int = 5,
     auto_prune_secs: int | None = None,
     auto_prune_interval: int = 3600,
     lru_update_interval: int = 30,
@@ -78,7 +78,7 @@ def configure(
     if telemetry is None and bus_url and bus_url.startswith("redis://"):
         from zoocache.telemetry.adapters.redis_adapter import RedisTelemetryAdapter
 
-        telemetry = TelemetryManager([RedisTelemetryAdapter(None, flush_interval=5.0)])
+        telemetry = TelemetryManager([RedisTelemetryAdapter(None, flush_interval=1.0)])
 
     _manager.configure(
         storage_url=storage_url,

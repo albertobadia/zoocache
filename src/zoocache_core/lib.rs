@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
+pub(crate) static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

@@ -65,7 +65,7 @@ impl RedisPubSubBus {
         let inspect_channel = self.inspect_channel.clone();
         let inspect_reply_channel = self.inspect_reply_channel.clone();
 
-        tokio::spawn(async move {
+        crate::RUNTIME.spawn(async move {
             let mut backoff_ms = 100;
 
             loop {

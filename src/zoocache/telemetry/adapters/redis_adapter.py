@@ -9,7 +9,7 @@ logger = logging.getLogger("zoocache.telemetry")
 
 
 class RedisTelemetryAdapter(TelemetryAdapter):
-    def __init__(self, core: Core, flush_interval: float = 5.0):
+    def __init__(self, core: Core, flush_interval: float = 1.0):
         self.core = core
         self.flush_interval = flush_interval
 
