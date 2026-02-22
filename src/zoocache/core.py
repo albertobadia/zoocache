@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import inspect
+import uuid
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -11,9 +12,9 @@ from zoocache.telemetry import TelemetryManager
 
 class CacheManager:
     def __init__(self):
+        self.node_id = uuid.uuid4().hex[:8]
         self.core: Core | None = None
         self.config: dict[str, Any] = {}
-        self._op_count: int = 0
         self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
         self._telemetry: TelemetryManager = TelemetryManager()
         self._last_tti_dropped: int = 0
@@ -34,31 +35,23 @@ class CacheManager:
 
     def get_core(self) -> Core:
         if self.core is None:
-            # Handle prune_after at manager level
             core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
+            core_args["node_id"] = getattr(self, "node_id", uuid.uuid4().hex[:8])
             self.core = Core(**core_args)
         return self.core
 
-    def maybe_prune(self) -> None:
-        self._op_count += 1
-        interval = self.config.get("auto_prune_interval", 1000)
-        if interval and self._op_count >= interval:
-            self._op_count = 0
-            if age := self.config.get("prune_after"):
-                core = self.get_core()
-                core.request_prune(age)
-
-            if self.core:
-                current_dropped = self.core.tti_dropped_messages()
-                if current_dropped > self._last_tti_dropped:
-                    delta = current_dropped - self._last_tti_dropped
-                    self.telemetry.increment("cache_tti_overflows_total", delta)
-                    self._last_tti_dropped = current_dropped
+    def check_telemetry(self) -> None:
+        if self.core:
+            current_dropped = self.core.tti_dropped_messages()
+            if current_dropped > self._last_tti_dropped:
+                delta = current_dropped - self._last_tti_dropped
+                self.telemetry.increment("cache_tti_overflows_total", delta)
+                self._last_tti_dropped = current_dropped
 
     def reset(self) -> None:
+        self.node_id = uuid.uuid4().hex[:8]
         self.core = None
         self.config = {}
-        self._op_count = 0
         self._flight_signals.clear()
         self._telemetry = TelemetryManager()
 
@@ -78,10 +71,15 @@ def configure(
     flight_timeout: int = 60,
     tti_flush_secs: int = 30,
     auto_prune_secs: int | None = None,
-    auto_prune_interval: int = 1000,
+    auto_prune_interval: int = 3600,
     lru_update_interval: int = 30,
     telemetry: TelemetryManager | None = None,
 ) -> None:
+    if telemetry is None and bus_url and bus_url.startswith("redis://"):
+        from zoocache.telemetry.adapters.redis_adapter import RedisTelemetryAdapter
+
+        telemetry = TelemetryManager([RedisTelemetryAdapter(None, flush_interval=5.0)])
+
     _manager.configure(
         storage_url=storage_url,
         bus_url=bus_url,
@@ -99,6 +97,12 @@ def configure(
         telemetry=telemetry,
     )
 
+    if telemetry and hasattr(telemetry, "_adapters"):
+        core_instance = _manager.get_core()
+        for adapter in telemetry._adapters:
+            if type(adapter).__name__ == "RedisTelemetryAdapter":
+                adapter.core = core_instance
+
 
 def prune(max_age_secs: int = 3600) -> None:
     _manager.get_core().prune(max_age_secs)
@@ -111,6 +115,7 @@ def clear() -> None:
 def invalidate(tag: str) -> None:
     _manager.get_core().invalidate(tag)
     if _manager.telemetry.enabled:
+        _manager.telemetry.increment("cache_invalidations_total")
         _manager.telemetry.increment("cache_invalidations_total", labels={"tag_prefix": tag})
 
 
@@ -172,7 +177,7 @@ def cacheable(
         @functools.wraps(fn)
         async def async_wrapper(*args, **kwargs):
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
-            _manager.maybe_prune()
+            _manager.check_telemetry()
 
             while True:
                 with _manager.telemetry.time_operation("cache_get_duration_seconds"):
@@ -201,7 +206,6 @@ def cacheable(
                         return await _wait_for_leader(fut)
                     await sig.wait()
                 except BaseException:
-                    # Let the leader handle signal resolution on failure
                     raise
 
             leader_fut = asyncio.get_running_loop().create_future()
@@ -218,6 +222,7 @@ def cacheable(
                     leader_fut.set_result(res)
                 return res
             except BaseException as e:
+                _manager.telemetry.increment("cache_errors_total")
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 if not leader_fut.done():
                     leader_fut.set_exception(e)
@@ -229,7 +234,7 @@ def cacheable(
         @functools.wraps(fn)
         def sync_wrapper(*args, **kwargs):
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
-            _manager.maybe_prune()
+            _manager.check_telemetry()
 
             val, is_leader, is_hit = core.get_or_entry(key)
             if is_hit:
@@ -238,7 +243,7 @@ def cacheable(
 
             _manager.telemetry.increment("cache_misses_total")
             if not is_leader:
-                return fn(*args, **kwargs)  # Bypass to avoid returning None if leader active
+                return fn(*args, **kwargs)
 
             success = False
             res = None

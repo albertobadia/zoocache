@@ -1,4 +1,4 @@
-from zoocache._zoocache import InvalidTag
+from zoocache._zoocache import InvalidTag, StorageIsFull
 from zoocache.context import add_deps
 from zoocache.core import (
     cacheable,
@@ -24,4 +24,5 @@ __all__ = [
     "get",
     "set",
     "InvalidTag",
+    "StorageIsFull",
 ]

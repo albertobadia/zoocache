@@ -102,6 +102,8 @@ Explore the deep dives into Zoocache's architecture and features:
 - [**Distributed Consistency**](docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
 - [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
 - [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
+- [**FastAPI Integration**](docs/fastapi.md) - Out-of-box caching for FastAPI endpoints.
+- [**Litestar Integration**](docs/litestar.md) - Out-of-box caching for Litestar endpoints.
 - [**Django Serializers Auto**](docs/django_serializers.md) - Automatic caching for Django REST Framework.
 - [**Reliability & Edge Cases**](docs/reliability.md) - Fail-fast mechanisms and memory management.
 

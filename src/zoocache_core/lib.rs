@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::utils::{to_conn_err, to_runtime_err};
+use crate::utils::to_conn_err;
 use bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use flight::{Flight, FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use std::num::NonZeroUsize;
@@ -22,11 +22,24 @@ use storage::{CacheEntry, InMemoryStorage, LmdbStorage, RedisStorage, Storage};
 use trie::{PrefixTrie, build_dependency_snapshots, validate_dependencies};
 
 pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
+pyo3::create_exception!(zoocache, StorageIsFull, pyo3::exceptions::PyException);
 
 fn validate_tag(tag: &str) -> PyResult<()> {
     if tag.is_empty() {
         return Err(InvalidTag::new_err("Tag cannot be empty"));
     }
+    if tag.len() > 256 {
+        return Err(InvalidTag::new_err(format!(
+            "Tag length exceeded: {}. Max allowed is 256 characters.",
+            tag.len()
+        )));
+    }
+    if tag.starts_with(':') || tag.ends_with(':') || tag.starts_with('.') || tag.ends_with('.') {
+        return Err(InvalidTag::new_err(
+            "Tag cannot start or end with ':' or '.'",
+        ));
+    }
+
     let mut depth = 0;
     for c in tag.chars() {
         if c == ':' {
@@ -53,6 +66,7 @@ enum WorkerMsg {
     Prune(u64),
     Delete(String),
     Update(String, Vec<u8>, Option<u64>),
+    FlushMetrics(HashMap<String, f64>),
 }
 
 #[pyclass]
@@ -73,8 +87,9 @@ struct Core {
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30))]
+    #[pyo3(signature = (node_id=None, storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30))]
     fn new(
+        node_id: Option<&str>,
         storage_url: Option<&str>,
         bus_url: Option<&str>,
         prefix: Option<&str>,
@@ -93,7 +108,7 @@ impl Core {
                 Arc::new(RedisStorage::new(url, prefix, lru_update_interval).map_err(to_conn_err)?)
             }
             Some(url) if url.starts_with("lmdb://") => {
-                Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size).map_err(to_runtime_err)?)
+                Arc::new(LmdbStorage::new(&url[7..], lmdb_map_size)?)
             }
             Some(url) => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -111,13 +126,42 @@ impl Core {
             Some(url) => {
                 bus_is_remote = true;
                 let channel = prefix.map(|p| format!("{}:invalidate", p));
-                let r_bus =
-                    Arc::new(RedisPubSubBus::new(url, channel.as_deref()).map_err(to_conn_err)?);
+                let r_bus = Arc::new(
+                    RedisPubSubBus::new(url, channel.as_deref(), prefix, node_id)
+                        .map_err(to_conn_err)?,
+                );
 
                 let t_clone = trie.clone();
-                r_bus.start_listener(move |tag, ver| {
-                    t_clone.set_min_version(tag, ver);
-                });
+                let storage_clone = Arc::clone(&storage);
+                let node_id_owned = node_id.unwrap_or("unknown").to_string();
+
+                r_bus.start_listener(
+                    move |tag, ver| {
+                        t_clone.set_min_version(tag, ver);
+                    },
+                    move |prefix, req_id| {
+                        let matching_keys = storage_clone.scan_keys(prefix);
+
+                        let keys_json: Vec<serde_json::Value> = matching_keys
+                            .into_iter()
+                            .map(|(k, expires_at)| {
+                                let ttl_rem =
+                                    expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
+                                serde_json::json!({
+                                    "key": k,
+                                    "ttl_remaining": ttl_rem
+                                })
+                            })
+                            .collect();
+
+                        let payload = serde_json::json!({
+                            "req_id": req_id,
+                            "node_id": node_id_owned,
+                            "keys": keys_json
+                        });
+                        serde_json::to_string(&payload).ok()
+                    },
+                );
                 r_bus
             }
             None => Arc::new(LocalBus::new()),
@@ -130,8 +174,14 @@ impl Core {
             let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
             let storage_worker = Arc::clone(&storage);
             let trie_worker = trie.clone();
+            let bus_worker = Arc::clone(&bus);
+            let node_id_worker = node_id.unwrap_or("unknown").to_string();
 
             thread::spawn(move || {
+                let mut sys = sysinfo::System::new_all();
+                let mut local_metrics: HashMap<String, f64> = HashMap::new();
+                let mut last_heartbeat = Instant::now();
+
                 let mut last_touches =
                     lru::LruCache::<String, Instant>::new(NonZeroUsize::new(10000).unwrap());
                 let mut batch = HashMap::<String, Option<u64>>::new();
@@ -141,14 +191,17 @@ impl Core {
                 let prune_interval = Duration::from_secs(auto_prune_interval.unwrap_or(3600));
                 let prune_age = auto_prune_secs.unwrap_or(3600);
 
-                while let Ok(msg) = rx.recv_timeout(Duration::from_secs(1)).or_else(|e| {
-                    if e == mpsc::RecvTimeoutError::Timeout {
-                        Ok(WorkerMsg::Touch(String::new(), None))
-                    } else {
-                        Err(e)
-                    }
-                }) {
+                loop {
+                    let msg_result = rx.recv_timeout(Duration::from_secs(1));
                     let now = Instant::now();
+                    let msg = match msg_result {
+                        Ok(m) => m,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            WorkerMsg::Touch(String::new(), None)
+                        }
+                        Err(_) => break,
+                    };
+
                     match msg {
                         WorkerMsg::Touch(key, ttl) => {
                             if !key.is_empty() {
@@ -171,6 +224,11 @@ impl Core {
                         WorkerMsg::Update(key, data, ttl) => {
                             let _ = storage_worker.set_raw(key, data, ttl);
                         }
+                        WorkerMsg::FlushMetrics(metrics) => {
+                            for (k, v) in metrics {
+                                *local_metrics.entry(k).or_insert(0.0) += v;
+                            }
+                        }
                     }
 
                     if (batch.len() >= 1000 || now.duration_since(last_flush) > flush_duration)
@@ -183,6 +241,38 @@ impl Core {
                     if now.duration_since(last_auto_prune) > prune_interval {
                         trie_worker.prune(prune_age);
                         last_auto_prune = now;
+                    }
+
+                    if bus_is_remote && now.duration_since(last_heartbeat) > Duration::from_secs(1)
+                    {
+                        sys.refresh_cpu_usage();
+                        sys.refresh_memory();
+                        let cpu_percent = sys.global_cpu_usage();
+                        let ram_used = sys.used_memory() as f64;
+                        let ram_total = sys.total_memory() as f64;
+                        let ram_percent = if ram_total > 0.0 {
+                            (ram_used / ram_total) * 100.0
+                        } else {
+                            0.0
+                        };
+                        let hostname =
+                            sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
+                        let uptime = sysinfo::System::uptime();
+
+                        let payload = serde_json::json!({
+                            "uuid": node_id_worker,
+                            "hostname": hostname,
+                            "cpu": cpu_percent,
+                            "ram": ram_percent,
+                            "uptime": uptime,
+                            "metrics": local_metrics,
+                        });
+
+                        if let Ok(json_str) = serde_json::to_string(&payload) {
+                            let _ = bus_worker.push_heartbeat(&node_id_worker, &json_str, 5);
+                        }
+
+                        last_heartbeat = now;
                     }
                 }
             });
@@ -286,6 +376,9 @@ impl Core {
 
         let current_global_version = self.trie.get_global_version();
         if entry.trie_version == current_global_version {
+            if self.storage.needs_tti_worker() {
+                self.send_tti_msg(WorkerMsg::Touch(key.to_string(), self.default_ttl));
+            }
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
@@ -306,7 +399,7 @@ impl Core {
                 let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
                 self.send_tti_msg(WorkerMsg::Update(key.to_string(), data, ttl));
             }
-        } else {
+        } else if self.storage.needs_tti_worker() {
             self.send_tti_msg(WorkerMsg::Touch(key.to_string(), self.default_ttl));
         }
 
@@ -395,6 +488,11 @@ impl Core {
     fn tti_dropped_messages(&self) -> u64 {
         self.dropped_tti_msgs.load(Ordering::Relaxed)
     }
+
+    fn flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {
+        self.send_tti_msg(WorkerMsg::FlushMetrics(metrics));
+        Ok(())
+    }
 }
 
 impl Core {
@@ -433,5 +531,6 @@ fn _zoocache(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Core>()?;
     m.add_function(wrap_pyfunction!(hash_key, m)?)?;
     m.add("InvalidTag", m.py().get_type::<InvalidTag>())?;
+    m.add("StorageIsFull", m.py().get_type::<StorageIsFull>())?;
     Ok(())
 }
