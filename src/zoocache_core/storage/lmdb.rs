@@ -1,7 +1,9 @@
 use crate::StorageIsFull;
 use crate::storage::{CacheEntry, Storage};
 use crate::utils::{now_nanos, now_secs, to_runtime_err};
-use lmdb::{Cursor, Database, DatabaseFlags, Environment, Transaction, WriteFlags};
+use lmdb::{
+    Cursor, Database, DatabaseFlags, Environment, EnvironmentFlags, Transaction, WriteFlags,
+};
 use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
@@ -30,6 +32,13 @@ impl LmdbStorage {
         let env = Environment::new()
             .set_max_dbs(5)
             .set_map_size(map_size)
+            .set_flags(
+                EnvironmentFlags::NO_SYNC
+                    | EnvironmentFlags::NO_META_SYNC
+                    | EnvironmentFlags::NO_TLS
+                    | EnvironmentFlags::WRITE_MAP
+                    | EnvironmentFlags::MAP_ASYNC,
+            )
             .open(path)
             .map_err(Self::to_storage_is_full_err)?;
 

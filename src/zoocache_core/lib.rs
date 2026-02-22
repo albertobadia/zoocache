@@ -376,6 +376,7 @@ impl Core {
 
         let current_global_version = self.trie.get_global_version();
         if entry.trie_version == current_global_version {
+            self.send_tti_msg(WorkerMsg::Touch(key.to_string(), self.default_ttl));
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
