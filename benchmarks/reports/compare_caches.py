@@ -9,7 +9,20 @@ import time
 from cashews import cache as cashews_cache
 from diskcache import Cache as DiskCache
 
-from zoocache import clear as zc_clear, configure, get as zc_get, invalidate as zc_inv, reset as zc_reset, set as zc_set
+from zoocache import (
+    clear as zc_clear,
+    clear_async as zc_clear_async,
+    configure,
+    get as zc_get,
+    get_async as zc_get_async,
+    get_tag_version,
+    invalidate as zc_inv,
+    invalidate_async as zc_inv_async,
+    reset as zc_reset,
+    set as zc_set,
+    set_async as zc_set_async,
+)
+from zoocache._zoocache import Core
 
 NUM_ITEMS = 5000
 TAG = "semantic_tag"
@@ -103,6 +116,80 @@ def bench_diskcache():
     return sum(w_times) / 3, sum(r_times) / 3, sum(i_times) / 3
 
 
+async def bench_zoocache_propagation():
+    """
+    Measure real invalidation propagation latency between two ZooCache nodes.
+    
+    This benchmark creates two separate nodes connected to the same Redis:
+    - Node 1 (primary): Performs invalidations
+    - Node 2 (secondary): Receives invalidations via Redis pub/sub
+    
+    Measures the time from invalidation on Node 1 until Node 2 receives it.
+    """
+    zc_reset()
+    
+    # Node 1: Primary node that performs invalidations
+    configure(storage_url=REDIS_URL, bus_url=REDIS_URL, prefix="bench_prop")
+    await zc_clear_async()
+    
+    # Node 2: Secondary node that only receives invalidations
+    node2 = Core(storage_url=REDIS_URL, bus_url=REDIS_URL, prefix="bench_prop", node_id="node2")
+    
+    # Wait for node2's Redis subscriber to be ready
+    await asyncio.sleep(0.5)
+    
+    # Warm up both nodes and verify propagation works
+    for i in range(100):
+        await zc_set_async(f"warm_{i}", b"1")
+        await zc_get_async(f"warm_{i}")
+    
+    # Verify propagation is working before measuring
+    test_tag = "test_propagation_verify"
+    initial = node2.get_tag_version(test_tag)
+    await zc_inv_async(test_tag)
+    await asyncio.sleep(0.1)  # Wait for propagation
+    final = node2.get_tag_version(test_tag)
+    print(f"  Propagation verify: {initial} -> {final}")
+    if final == initial:
+        print("  WARNING: Propagation not working, Redis pub/sub may not be connected")
+    
+    propagation_times = []
+    
+    for iteration in range(3):
+        await zc_clear_async()
+        
+        # Write items with tag
+        for i in range(NUM_ITEMS):
+            await zc_set_async(f"zc_{i}", b"val", deps=[TAG])
+        
+        # Get initial version on node 2
+        initial_version = node2.get_tag_version(TAG)
+        print(f"  Iteration {iteration + 1}: Initial version on node2 = {initial_version}")
+        
+        # Invalidate on node 1 and measure propagation to node 2
+        t0 = time.perf_counter()
+        await zc_inv_async(TAG)
+        
+        # Poll node 2 until it receives the invalidation (with timeout)
+        timeout_secs = 5.0
+        while True:
+            current_version = node2.get_tag_version(TAG)
+            if current_version > initial_version:
+                elapsed = (time.perf_counter() - t0) * 1000
+                propagation_times.append(elapsed)
+                print(f"  Iteration {iteration + 1}: Received! {initial_version} -> {current_version} in {elapsed:.2f}ms")
+                break
+            if (time.perf_counter() - t0) > timeout_secs:
+                propagation_times.append(timeout_secs * 1000)  # Timeout
+                print(f"  Iteration {iteration + 1}: TIMEOUT after {timeout_secs}s")
+                break
+            await asyncio.sleep(0.0001)  # 0.1ms polling interval
+    
+    return sum(propagation_times) / len(propagation_times)
+    
+    return sum(propagation_times) / len(propagation_times)
+
+
 def bench_zoocache(storage_url=None):
     zc_reset()
     if storage_url:
@@ -130,6 +217,38 @@ def bench_zoocache(storage_url=None):
 
         t0 = time.perf_counter()
         zc_inv(TAG)
+        i_times.append((time.perf_counter() - t0) * 1000)
+
+    return sum(w_times) / 3, sum(r_times) / 3, sum(i_times) / 3
+
+
+async def bench_zoocache_async(storage_url=None, bus_url=None):
+    zc_reset()
+    if storage_url:
+        configure(storage_url=storage_url, bus_url=bus_url, prefix="bench")
+    else:
+        configure(prefix="bench")
+    await zc_clear_async()
+    for i in range(100):
+        await zc_set_async(f"warm_{i}", b"1")
+        zc_get(f"warm_{i}")
+
+    w_times, r_times, i_times = [], [], []
+    for _ in range(3):
+        await zc_clear_async()
+
+        t0 = time.perf_counter()
+        for i in range(NUM_ITEMS):
+            await zc_set_async(f"zc_{i}", b"val", deps=[TAG])
+        w_times.append((time.perf_counter() - t0) * 1000)
+
+        t0 = time.perf_counter()
+        for i in range(NUM_ITEMS):
+            zc_get(f"zc_{i}")
+        r_times.append((time.perf_counter() - t0) * 1000)
+
+        t0 = time.perf_counter()
+        await zc_inv_async(TAG)
         i_times.append((time.perf_counter() - t0) * 1000)
 
     return sum(w_times) / 3, sum(r_times) / 3, sum(i_times) / 3
@@ -275,6 +394,7 @@ def main():
     print("Running Comparison Benchmarks...")
 
     results = {}
+    propagation_result = None
 
     print("- Cashews (Memory)")
     results["Cashews (Mem)"] = asyncio.run(bench_cashews("mem"))
@@ -289,7 +409,7 @@ def main():
     results["ZooCache (Mem)"] = bench_zoocache(None)
 
     print("- ZooCache (Redis)")
-    results["ZooCache (Redis)"] = bench_zoocache(REDIS_URL)
+    results["ZooCache (Redis)"] = asyncio.run(bench_zoocache_async(REDIS_URL, REDIS_URL))
 
     print("- ZooCache (LMDB)")
     lmdb_path = "/tmp/zc_bench_lmdb"
@@ -297,12 +417,24 @@ def main():
         shutil.rmtree(lmdb_path)
     results["ZooCache (LMDB)"] = bench_zoocache(f"lmdb://{lmdb_path}")
 
+    print("- ZooCache (Redis Propagation)")
+    propagation_result = asyncio.run(bench_zoocache_propagation())
+
+    # Use propagation result for the main comparison if available
+    if "ZooCache (Redis)" in results and propagation_result is not None:
+        w, r, _ = results["ZooCache (Redis)"]
+        results["ZooCache (Redis)"] = (w, r, propagation_result)
+
     generate_svg(results, "ZooCache Performance vs Alternatives", "benchmarks/reports/comparison-dark.svg", "dark")
     generate_svg(results, "ZooCache Performance vs Alternatives", "benchmarks/reports/comparison-light.svg", "light")
 
     print("\nBenchmark Complete.")
     for k, v in results.items():
         print(f"{k}: W={v[0]:.2f}ms, R={v[1]:.2f}ms, I={v[2]:.2f}ms")
+    
+    if propagation_result is not None:
+        print(f"\nZooCache Redis Propagation Latency: {propagation_result:.2f}ms")
+        print("  (Time from invalidation on Node 1 until received on Node 2 via Redis pub/sub)")
 
 
 if __name__ == "__main__":

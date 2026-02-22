@@ -52,7 +52,15 @@ Zoocache is continuously benchmarked to ensure zero performance regressions. We 
   </picture>
 </p>
 
-> **Note**: Benchmark scale: 5,000 operations. ZooCache maintains O(1) tagging overhead and scales linearly. Latency values represent the end-to-end operation time including storage overhead.
+### Performance Context
+
+The benchmark results reflect ZooCache's specific architectural choices:
+
+- **Rust Core**: Implementing the core logic in Rust reduces the processing time spent on internal cache management and synchronization compared to pure Python implementations.
+- **Trie-based Invalidation**: Instead of matching and deleting individual keys, ZooCache uses a `PrefixTrie` to manage dependencies. Invalidation is performed by updating versions in the trie, which remains efficient even as the number of cached items grows.
+- **Pub/Sub Bus**: Using Redis Pub/Sub for the invalidation bus enables low-latency propagation of invalidation signals across multiple nodes, typically completing in under 1ms.
+
+> **Note**: Benchmark scale: 5,000 operations. Redis is running on **localhost** (loopback) to eliminate network latency interference and focus on internal engine overhead. ZooCache maintains O(1) tagging overhead and scales linearly. Latency values represent the end-to-end operation time including storage overhead.
 <!-- PERFORMANCE-CHART:END -->
 
 ---

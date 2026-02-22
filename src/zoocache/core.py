@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import inspect
+import threading
 import uuid
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -18,6 +19,8 @@ class CacheManager:
         self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
         self._telemetry: TelemetryManager = TelemetryManager()
         self._last_tti_dropped: int = 0
+        self._last_silent_errors: int = 0
+        self._lock = threading.Lock()
 
     @property
     def telemetry(self) -> TelemetryManager:
@@ -27,18 +30,20 @@ class CacheManager:
         return self.core is not None or bool(self.config)
 
     def configure(self, telemetry: TelemetryManager | None = None, **kwargs) -> None:
-        if self.is_configured() and any(self.config.get(k) != v for k, v in kwargs.items()):
-            raise RuntimeError("zoocache already initialized with different settings")
-        self.config = kwargs
-        if telemetry is not None:
-            self._telemetry = telemetry
+        with self._lock:
+            if self.is_configured() and any(self.config.get(k) != v for k, v in kwargs.items()):
+                raise RuntimeError("zoocache already initialized with different settings")
+            self.config = kwargs
+            if telemetry is not None:
+                self._telemetry = telemetry
 
     def get_core(self) -> Core:
-        if self.core is None:
-            core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
-            core_args["node_id"] = getattr(self, "node_id", uuid.uuid4().hex[:8])
-            self.core = Core(**core_args)
-        return self.core
+        with self._lock:
+            if self.core is None:
+                core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
+                core_args["node_id"] = getattr(self, "node_id", uuid.uuid4().hex[:8])
+                self.core = Core(**core_args)
+            return self.core
 
     def check_telemetry(self) -> None:
         if self.core:
@@ -47,6 +52,12 @@ class CacheManager:
                 delta = current_dropped - self._last_tti_dropped
                 self.telemetry.increment("cache_tti_overflows_total", delta)
                 self._last_tti_dropped = current_dropped
+
+            current_silent = self.core.silent_errors()
+            if current_silent > self._last_silent_errors:
+                delta = current_silent - self._last_silent_errors
+                self.telemetry.increment("cache_silent_errors_total", delta)
+                self._last_silent_errors = current_silent
 
     def reset(self) -> None:
         self.node_id = uuid.uuid4().hex[:8]
@@ -112,6 +123,10 @@ def clear() -> None:
     _manager.get_core().clear()
 
 
+async def clear_async() -> None:
+    await _manager.get_core().clear_async()
+
+
 def invalidate(tag: str) -> None:
     _manager.get_core().invalidate(tag)
     if _manager.telemetry.enabled:
@@ -128,6 +143,10 @@ async def invalidate_async(tag: str) -> None:
 
 def version() -> str:
     return _manager.get_core().version()
+
+
+def get_tag_version(tag: str) -> int:
+    return _manager.get_core().get_tag_version(tag)
 
 
 def _resolve_flight_signals(key: str) -> None:

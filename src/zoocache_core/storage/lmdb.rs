@@ -30,6 +30,18 @@ impl LmdbStorage {
 
         let map_size = map_size.unwrap_or(1024 * 1024 * 1024);
 
+        // SAFETY TRADE-OFF: These flags prioritize performance over durability:
+        // - NO_SYNC: Don't fsync after writes (faster but may lose data on crash)
+        // - NO_META_SYNC: Don't sync metadata (faster but may corrupt on crash)
+        // - WRITE_MAP: Use writable memory map (faster but less safe)
+        // - MAP_ASYNC: Don't flush pages synchronously (faster but riskier)
+        //
+        // For a cache, this is acceptable because:
+        // 1. All cached data can be recomputed from the source
+        // 2. On restart, corrupted entries will fail deserialization and be evicted
+        // 3. The performance gain is significant for high-throughput workloads
+        //
+        // If durability is critical, consider using Redis storage instead.
         let env = Environment::new()
             .set_max_dbs(5)
             .set_map_size(map_size)

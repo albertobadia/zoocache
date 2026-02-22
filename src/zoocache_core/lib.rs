@@ -88,6 +88,7 @@ struct Core {
     tti_tx: Option<SyncSender<WorkerMsg>>,
     dropped_tti_msgs: AtomicU64,
     flight_timeout: u64,
+    silent_errors: Arc<AtomicU64>,
 }
 
 #[pymethods]
@@ -185,6 +186,9 @@ impl Core {
 
         let mut tti_tx = None;
         let tti_flush_secs_val = tti_flush_secs.unwrap_or(30);
+        let flights = Arc::new(DashMap::new());
+        let flight_timeout_val = flight_timeout.unwrap_or(60);
+        let silent_errors = Arc::new(AtomicU64::new(0));
 
         if read_extend_ttl {
             let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
@@ -192,6 +196,8 @@ impl Core {
             let trie_worker = trie.clone();
             let bus_worker = Arc::clone(&bus);
             let node_id_worker = node_id.unwrap_or("unknown").to_string();
+            let flights_worker = Arc::clone(&flights);
+            let silent_errors_worker = Arc::clone(&silent_errors);
 
             thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -243,10 +249,14 @@ impl Core {
                                     trie_worker.prune(max_age);
                                 }
                                 WorkerMsg::Delete(key) => {
-                                    let _ = storage_worker.remove(&key).await;
+                                    if storage_worker.remove(&key).await.is_err() {
+                                        silent_errors_worker.fetch_add(1, Ordering::Relaxed);
+                                    }
                                 }
                                 WorkerMsg::Update(key, data, ttl) => {
-                                    let _ = storage_worker.set_raw(key, data, ttl).await;
+                                    if storage_worker.set_raw(key, data, ttl).await.is_err() {
+                                        silent_errors_worker.fetch_add(1, Ordering::Relaxed);
+                                    }
                                 }
                                 WorkerMsg::FlushMetrics(metrics) => {
                                     for (k, v) in metrics {
@@ -259,7 +269,13 @@ impl Core {
                         if (batch.len() >= 1000 || now.duration_since(last_flush) > flush_duration)
                             && !batch.is_empty()
                         {
-                            let _ = storage_worker.touch_batch(batch.drain().collect()).await;
+                            if storage_worker
+                                .touch_batch(batch.drain().collect())
+                                .await
+                                .is_err()
+                            {
+                                silent_errors_worker.fetch_add(1, Ordering::Relaxed);
+                            }
                             last_flush = now;
                         }
 
@@ -267,6 +283,9 @@ impl Core {
                             trie_worker.prune(prune_age);
                             last_auto_prune = now;
                         }
+
+                        // Cleanup stale flights
+                        flight::cleanup_stale_flights(&flights_worker, flight_timeout_val);
 
                         if bus_is_remote
                             && now.duration_since(last_heartbeat) > Duration::from_secs(1)
@@ -295,9 +314,13 @@ impl Core {
                             });
 
                             if let Ok(json_str) = serde_json::to_string(&payload) {
-                                let _ = bus_worker
+                                if bus_worker
                                     .push_heartbeat(&node_id_worker, &json_str, 5)
-                                    .await;
+                                    .await
+                                    .is_err()
+                                {
+                                    silent_errors_worker.fetch_add(1, Ordering::Relaxed);
+                                }
                             }
 
                             last_heartbeat = now;
@@ -312,12 +335,13 @@ impl Core {
             storage,
             bus,
             trie,
-            flights: Arc::new(DashMap::new()),
+            flights,
             default_ttl,
             max_entries,
             tti_tx,
             dropped_tti_msgs: AtomicU64::new(0),
-            flight_timeout: flight_timeout.unwrap_or(60),
+            flight_timeout: flight_timeout_val,
+            silent_errors,
         })
     }
 
@@ -879,6 +903,14 @@ impl Core {
 
     fn tti_dropped_messages(&self) -> u64 {
         self.dropped_tti_msgs.load(Ordering::Relaxed)
+    }
+
+    fn silent_errors(&self) -> u64 {
+        self.silent_errors.load(Ordering::Relaxed)
+    }
+
+    fn get_tag_version(&self, tag: String) -> u64 {
+        self.trie.get_tag_version(&tag)
     }
 
     fn flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {

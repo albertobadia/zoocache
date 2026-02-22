@@ -2,6 +2,7 @@ use dashmap::DashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::Notify;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +16,7 @@ pub(crate) enum FlightStatus {
 pub(crate) struct Flight {
     pub state: Mutex<(FlightStatus, Option<Py<PyAny>>)>,
     pub notify: Notify,
+    pub created_at: Instant,
 }
 
 #[inline]
@@ -32,6 +34,7 @@ pub(crate) fn try_enter_flight(
         Arc::new(Flight {
             state: Mutex::new((FlightStatus::Pending, None)),
             notify: Notify::new(),
+            created_at: Instant::now(),
         })
     });
     (Arc::clone(flight.value()), is_leader)
@@ -75,4 +78,39 @@ pub(crate) async fn wait_for_flight(flight: &Arc<Flight>, timeout_secs: u64) -> 
         }
         Err(_) => FlightStatus::Error,
     }
+}
+
+pub(crate) fn cleanup_stale_flights(
+    flights: &DashMap<String, Arc<Flight>>,
+    timeout_secs: u64,
+) -> usize {
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let mut removed = 0;
+
+    let to_remove: Vec<String> = flights
+        .iter()
+        .filter_map(|entry| {
+            let flight = entry.value();
+            let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
+
+            // Only remove pending flights that have exceeded the timeout
+            if state.0 == FlightStatus::Pending && flight.created_at.elapsed() > timeout {
+                Some(entry.key().clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for key in to_remove {
+        if let Some((_, flight)) = flights.remove(&key) {
+            // Notify any waiters that this flight was abandoned
+            let mut state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.0 = FlightStatus::Error;
+            flight.notify.notify_waiters();
+            removed += 1;
+        }
+    }
+
+    removed
 }

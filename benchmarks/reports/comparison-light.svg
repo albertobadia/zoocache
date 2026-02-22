@@ -13,116 +13,116 @@
   <line x1="180.0" y1="55" x2="180.0" y2="99" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="180.0" y="111" class="axis-label" text-anchor="middle">0.0ms</text>
   <line x1="320.0" y1="55" x2="320.0" y2="99" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="320.0" y="111" class="axis-label" text-anchor="middle">519.3ms</text>
+  <text x="320.0" y="111" class="axis-label" text-anchor="middle">501.2ms</text>
   <line x1="460.0" y1="55" x2="460.0" y2="99" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="460.0" y="111" class="axis-label" text-anchor="middle">1038.6ms</text>
+  <text x="460.0" y="111" class="axis-label" text-anchor="middle">1002.3ms</text>
   <line x1="600.0" y1="55" x2="600.0" y2="99" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="600.0" y="111" class="axis-label" text-anchor="middle">1557.9ms</text>
+  <text x="600.0" y="111" class="axis-label" text-anchor="middle">1503.5ms</text>
   <line x1="740.0" y1="55" x2="740.0" y2="99" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="740.0" y="111" class="axis-label" text-anchor="middle">2077.3ms</text>
+  <text x="740.0" y="111" class="axis-label" text-anchor="middle">2004.6ms</text>
   <text x="40" y="70" class="zc-label" text-anchor="start">ZooCache (Redis)</text>
-  <rect x="180" y="57" width="186.18130327546558" height="18" fill="#E65100" rx="3">
+  <rect x="180" y="57" width="252.7873777492791" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="371.18130327546555" y="70" class="axis-label" style="fill: #E65100; font-weight: bold;">690ms</text>
+  <text x="437.78737774927913" y="70" class="axis-label" style="fill: #E65100; font-weight: bold;">904ms</text>
   <text x="40" y="92" class="lib-label" text-anchor="start">Cashews (Redis)</text>
   <rect x="180" y="79" width="560.0" height="18" fill="#BDBDBD" rx="3">
   </rect>
-  <text x="745.0" y="92" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">2077ms</text>
+  <text x="745.0" y="92" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">2004ms</text>
   <text x="40" y="144" class="op-title">Read Latency (Redis)</text>
   <line x1="180.0" y1="159" x2="180.0" y2="203" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="180.0" y="215" class="axis-label" text-anchor="middle">0.0ms</text>
   <line x1="320.0" y1="159" x2="320.0" y2="203" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="320.0" y="215" class="axis-label" text-anchor="middle">254.5ms</text>
+  <text x="320.0" y="215" class="axis-label" text-anchor="middle">243.8ms</text>
   <line x1="460.0" y1="159" x2="460.0" y2="203" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="460.0" y="215" class="axis-label" text-anchor="middle">509.1ms</text>
+  <text x="460.0" y="215" class="axis-label" text-anchor="middle">487.6ms</text>
   <line x1="600.0" y1="159" x2="600.0" y2="203" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="600.0" y="215" class="axis-label" text-anchor="middle">763.6ms</text>
+  <text x="600.0" y="215" class="axis-label" text-anchor="middle">731.3ms</text>
   <line x1="740.0" y1="159" x2="740.0" y2="203" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="740.0" y="215" class="axis-label" text-anchor="middle">1018.2ms</text>
+  <text x="740.0" y="215" class="axis-label" text-anchor="middle">975.1ms</text>
   <text x="40" y="174" class="zc-label" text-anchor="start">ZooCache (Redis)</text>
-  <rect x="180" y="161" width="392.2436799678602" height="18" fill="#E65100" rx="3">
+  <rect x="180" y="161" width="424.22778506576066" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="577.2436799678602" y="174" class="axis-label" style="fill: #E65100; font-weight: bold;">713ms</text>
+  <text x="609.2277850657606" y="174" class="axis-label" style="fill: #E65100; font-weight: bold;">738ms</text>
   <text x="40" y="196" class="lib-label" text-anchor="start">Cashews (Redis)</text>
   <rect x="180" y="183" width="560.0" height="18" fill="#BDBDBD" rx="3">
   </rect>
-  <text x="745.0" y="196" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">1018ms</text>
+  <text x="745.0" y="196" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">975ms</text>
   <text x="40" y="248" class="op-title">Semantic Invalidation Latency (Redis)</text>
   <line x1="180.0" y1="263" x2="180.0" y2="307" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="180.0" y="319" class="axis-label" text-anchor="middle">0.0ms</text>
   <line x1="320.0" y1="263" x2="320.0" y2="307" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="320.0" y="319" class="axis-label" text-anchor="middle">9.9ms</text>
+  <text x="320.0" y="319" class="axis-label" text-anchor="middle">10.0ms</text>
   <line x1="460.0" y1="263" x2="460.0" y2="307" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="460.0" y="319" class="axis-label" text-anchor="middle">19.8ms</text>
+  <text x="460.0" y="319" class="axis-label" text-anchor="middle">20.1ms</text>
   <line x1="600.0" y1="263" x2="600.0" y2="307" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="600.0" y="319" class="axis-label" text-anchor="middle">29.8ms</text>
+  <text x="600.0" y="319" class="axis-label" text-anchor="middle">30.1ms</text>
   <line x1="740.0" y1="263" x2="740.0" y2="307" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="740.0" y="319" class="axis-label" text-anchor="middle">39.7ms</text>
+  <text x="740.0" y="319" class="axis-label" text-anchor="middle">40.1ms</text>
   <text x="40" y="278" class="zc-label" text-anchor="start">ZooCache (Redis)</text>
-  <rect x="180" y="265" width="3" height="18" fill="#E65100" rx="3">
+  <rect x="180" y="265" width="4.110170288051289" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="188" y="278" class="axis-label" style="fill: #E65100; font-weight: bold;">0.0089ms</text>
+  <text x="189.11017028805128" y="278" class="axis-label" style="fill: #E65100; font-weight: bold;">0.29ms</text>
   <text x="40" y="300" class="lib-label" text-anchor="start">Cashews (Redis)</text>
   <rect x="180" y="287" width="560.0" height="18" fill="#BDBDBD" rx="3">
   </rect>
-  <text x="745.0" y="300" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">39ms</text>
+  <text x="745.0" y="300" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">40ms</text>
   <text x="40" y="352" class="op-title">Write Latency (Local)</text>
   <line x1="180.0" y1="367" x2="180.0" y2="455" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="180.0" y="467" class="axis-label" text-anchor="middle">0.0ms</text>
   <line x1="320.0" y1="367" x2="320.0" y2="455" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="320.0" y="467" class="axis-label" text-anchor="middle">65.0ms</text>
+  <text x="320.0" y="467" class="axis-label" text-anchor="middle">68.4ms</text>
   <line x1="460.0" y1="367" x2="460.0" y2="455" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="460.0" y="467" class="axis-label" text-anchor="middle">130.1ms</text>
+  <text x="460.0" y="467" class="axis-label" text-anchor="middle">136.9ms</text>
   <line x1="600.0" y1="367" x2="600.0" y2="455" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="600.0" y="467" class="axis-label" text-anchor="middle">195.1ms</text>
+  <text x="600.0" y="467" class="axis-label" text-anchor="middle">205.3ms</text>
   <line x1="740.0" y1="367" x2="740.0" y2="455" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="740.0" y="467" class="axis-label" text-anchor="middle">260.2ms</text>
+  <text x="740.0" y="467" class="axis-label" text-anchor="middle">273.8ms</text>
   <text x="40" y="382" class="zc-label" text-anchor="start">ZooCache (Mem)</text>
-  <rect x="180" y="369" width="7.995832538887444" height="18" fill="#E65100" rx="3">
+  <rect x="180" y="369" width="9.146662568878385" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="192.99583253888744" y="382" class="axis-label" style="fill: #E65100; font-weight: bold;">3.71ms</text>
+  <text x="194.14666256887838" y="382" class="axis-label" style="fill: #E65100; font-weight: bold;">4.47ms</text>
   <text x="40" y="404" class="zc-label" text-anchor="start">ZooCache (LMDB)</text>
-  <rect x="180" y="391" width="54.18837108479851" height="18" fill="#E65100" rx="3">
+  <rect x="180" y="391" width="53.445900734547806" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="239.18837108479852" y="404" class="axis-label" style="fill: #E65100; font-weight: bold;">25ms</text>
+  <text x="238.44590073454782" y="404" class="axis-label" style="fill: #E65100; font-weight: bold;">26ms</text>
   <text x="40" y="426" class="lib-label" text-anchor="start">Cashews (Mem)</text>
-  <rect x="180" y="413" width="355.73054854131567" height="18" fill="#BDBDBD" rx="3">
+  <rect x="180" y="413" width="324.02871466778413" height="18" fill="#BDBDBD" rx="3">
   </rect>
-  <text x="540.7305485413157" y="426" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">165ms</text>
+  <text x="509.02871466778413" y="426" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">158ms</text>
   <text x="40" y="448" class="lib-label" text-anchor="start">DiskCache (File)</text>
   <rect x="180" y="435" width="560.0" height="18" fill="#BDBDBD" rx="3">
   </rect>
-  <text x="745.0" y="448" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">260ms</text>
+  <text x="745.0" y="448" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">273ms</text>
   <text x="40" y="500" class="op-title">Read Latency (Local)</text>
   <line x1="180.0" y1="515" x2="180.0" y2="603" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="180.0" y="615" class="axis-label" text-anchor="middle">0.0ms</text>
   <line x1="320.0" y1="515" x2="320.0" y2="603" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="320.0" y="615" class="axis-label" text-anchor="middle">4.9ms</text>
   <line x1="460.0" y1="515" x2="460.0" y2="603" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="460.0" y="615" class="axis-label" text-anchor="middle">9.8ms</text>
+  <text x="460.0" y="615" class="axis-label" text-anchor="middle">9.7ms</text>
   <line x1="600.0" y1="515" x2="600.0" y2="603" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="600.0" y="615" class="axis-label" text-anchor="middle">14.6ms</text>
   <line x1="740.0" y1="515" x2="740.0" y2="603" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="740.0" y="615" class="axis-label" text-anchor="middle">19.5ms</text>
   <text x="40" y="530" class="zc-label" text-anchor="start">ZooCache (Mem)</text>
-  <rect x="180" y="517" width="45.35009845673214" height="18" fill="#E65100" rx="3">
+  <rect x="180" y="517" width="60.17319899559435" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="230.35009845673216" y="530" class="axis-label" style="fill: #E65100; font-weight: bold;">1.58ms</text>
+  <text x="245.17319899559436" y="530" class="axis-label" style="fill: #E65100; font-weight: bold;">2.09ms</text>
   <text x="40" y="552" class="zc-label" text-anchor="start">ZooCache (LMDB)</text>
-  <rect x="180" y="539" width="143.10123514658903" height="18" fill="#E65100" rx="3">
+  <rect x="180" y="539" width="166.42684785602918" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="328.10123514658903" y="552" class="axis-label" style="fill: #E65100; font-weight: bold;">4.99ms</text>
+  <text x="351.4268478560292" y="552" class="axis-label" style="fill: #E65100; font-weight: bold;">5.79ms</text>
   <text x="40" y="574" class="lib-label" text-anchor="start">Cashews (Mem)</text>
-  <rect x="180" y="561" width="324.63590032374367" height="18" fill="#BDBDBD" rx="3">
+  <rect x="180" y="561" width="321.2842669438018" height="18" fill="#BDBDBD" rx="3">
   </rect>
-  <text x="509.63590032374367" y="574" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">11ms</text>
+  <text x="506.2842669438018" y="574" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">11ms</text>
   <text x="40" y="596" class="lib-label" text-anchor="start">DiskCache (File)</text>
   <rect x="180" y="583" width="560.0" height="18" fill="#BDBDBD" rx="3">
   </rect>
@@ -131,27 +131,27 @@
   <line x1="180.0" y1="663" x2="180.0" y2="751" stroke="#E0E0E0" stroke-dasharray="2"/>
   <text x="180.0" y="763" class="axis-label" text-anchor="middle">0.0ms</text>
   <line x1="320.0" y1="663" x2="320.0" y2="751" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="320.0" y="763" class="axis-label" text-anchor="middle">3.7ms</text>
+  <text x="320.0" y="763" class="axis-label" text-anchor="middle">3.6ms</text>
   <line x1="460.0" y1="663" x2="460.0" y2="751" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="460.0" y="763" class="axis-label" text-anchor="middle">7.5ms</text>
+  <text x="460.0" y="763" class="axis-label" text-anchor="middle">7.2ms</text>
   <line x1="600.0" y1="663" x2="600.0" y2="751" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="600.0" y="763" class="axis-label" text-anchor="middle">11.2ms</text>
+  <text x="600.0" y="763" class="axis-label" text-anchor="middle">10.8ms</text>
   <line x1="740.0" y1="663" x2="740.0" y2="751" stroke="#E0E0E0" stroke-dasharray="2"/>
-  <text x="740.0" y="763" class="axis-label" text-anchor="middle">14.9ms</text>
+  <text x="740.0" y="763" class="axis-label" text-anchor="middle">14.5ms</text>
   <text x="40" y="678" class="zc-label" text-anchor="start">ZooCache (LMDB)</text>
   <rect x="180" y="665" width="3" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="188" y="678" class="axis-label" style="fill: #E65100; font-weight: bold;">0.0063ms</text>
+  <text x="188" y="678" class="axis-label" style="fill: #E65100; font-weight: bold;">0.0086ms</text>
   <text x="40" y="700" class="zc-label" text-anchor="start">ZooCache (Mem)</text>
   <rect x="180" y="687" width="3" height="18" fill="#E65100" rx="3">
     <animate attributeName="opacity" values="1;0.8;1" dur="2s" repeatCount="indefinite" />
   </rect>
-  <text x="188" y="700" class="axis-label" style="fill: #E65100; font-weight: bold;">0.06ms</text>
+  <text x="188" y="700" class="axis-label" style="fill: #E65100; font-weight: bold;">0.05ms</text>
   <text x="40" y="722" class="lib-label" text-anchor="start">Cashews (Mem)</text>
-  <rect x="180" y="709" width="188.68806174152175" height="18" fill="#BDBDBD" rx="3">
+  <rect x="180" y="709" width="190.68316166475105" height="18" fill="#BDBDBD" rx="3">
   </rect>
-  <text x="373.6880617415218" y="722" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">5.03ms</text>
+  <text x="375.6831616647511" y="722" class="axis-label" style="fill: #BDBDBD; font-weight: bold;">4.93ms</text>
   <text x="40" y="744" class="lib-label" text-anchor="start">DiskCache (File)</text>
   <rect x="180" y="731" width="560.0" height="18" fill="#BDBDBD" rx="3">
   </rect>
