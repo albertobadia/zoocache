@@ -76,7 +76,7 @@ impl Storage for InMemoryStorage {
         Ok(())
     }
 
-    fn len(&self) -> usize {
+    async fn len(&self) -> usize {
         self.map.len()
     }
 

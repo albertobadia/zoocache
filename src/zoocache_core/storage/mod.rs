@@ -102,7 +102,7 @@ pub(crate) trait Storage: Send + Sync {
     async fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
     async fn remove(&self, key: &str) -> PyResult<()>;
     async fn clear(&self) -> PyResult<()>;
-    fn len(&self) -> usize;
+    async fn len(&self) -> usize;
     async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
     async fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)>;
     fn needs_tti_worker(&self) -> bool {

@@ -316,7 +316,7 @@ impl Storage for LmdbStorage {
         Ok(())
     }
 
-    fn len(&self) -> usize {
+    async fn len(&self) -> usize {
         self.count.load(Ordering::SeqCst)
     }
 

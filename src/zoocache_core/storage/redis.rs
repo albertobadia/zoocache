@@ -201,20 +201,14 @@ impl Storage for RedisStorage {
         Ok(())
     }
 
-    fn len(&self) -> usize {
-        // ZCARD is fast, we could block briefly here given len() is rarely used in hot paths
-        // and usually from non-async contexts in our current Core design.
-        // However, for consistency, we'll use a block_on or rethink if we need len() to be async.
-        // For now, let's use a simplified approach since len() is used for eviction checks.
-        let client = self.client.clone();
-        match client.get_connection() {
-            Ok(mut conn) => {
-                let count: redis::RedisResult<usize> =
-                    redis::Commands::zcard(&mut conn, self.lru_key());
-                count.unwrap_or(0)
-            }
-            Err(_) => 0,
-        }
+    async fn len(&self) -> usize {
+        let mut conn = match self.get_conn().await {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+        let count: redis::RedisResult<usize> =
+            redis::AsyncCommands::zcard(&mut conn, self.lru_key()).await;
+        count.unwrap_or(0)
     }
 
     async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {

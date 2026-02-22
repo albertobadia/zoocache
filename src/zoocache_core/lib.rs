@@ -734,12 +734,9 @@ impl Core {
         // Fast path for local storages
         if let Ok(()) = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl) {
             if let Some(max) = max_entries {
-                let current = storage.len();
+                let current = py.detach(|| RUNTIME.block_on(storage.len()));
                 if current > max {
                     let to_evict = current - max + (max / 10).max(1);
-                    // eviction is still async for now, but we can block_on it if needed
-                    // or just return success and let TTI worker handle it?
-                    // Actually, for correctness of max_entries, we should do it here.
                     py.detach(|| RUNTIME.block_on(storage.evict_lru(to_evict)))
                         .ok();
                     trie.prune(0);
@@ -753,7 +750,7 @@ impl Core {
                 storage.set(key, entry, final_ttl).await?;
 
                 if let Some(max) = max_entries {
-                    let current = storage.len();
+                    let current = storage.len().await;
                     if current > max {
                         let to_evict = current - max + (max / 10).max(1);
                         storage.evict_lru(to_evict).await?;
@@ -793,7 +790,7 @@ impl Core {
             storage.set(key, entry, final_ttl).await?;
 
             if let Some(max) = max_entries {
-                let current = storage.len();
+                let current = storage.len().await;
                 if current > max {
                     let to_evict = current - max + (max / 10).max(1);
                     storage.evict_lru(to_evict).await?;
@@ -873,7 +870,7 @@ impl Core {
     }
 
     fn len(&self) -> usize {
-        self.storage.len()
+        RUNTIME.block_on(self.storage.len())
     }
 
     fn version(&self) -> String {
