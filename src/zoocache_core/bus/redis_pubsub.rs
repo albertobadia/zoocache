@@ -105,7 +105,7 @@ impl RedisPubSubBus {
                         if let Some((prefix, req_id)) = payload.rsplit_once('|') {
                             let prefix = prefix.trim();
                             let req_id = req_id.trim();
-                            
+
                             if let Some(reply_json) = inspect_cb(prefix, req_id)
                                 && let Ok(mut reply_conn) = pool.get()
                             {

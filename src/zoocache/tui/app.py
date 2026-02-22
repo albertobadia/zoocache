@@ -158,7 +158,7 @@ class ZooCacheCLI(App):
 
                     is_inspect = isinstance(self.screen, InspectScreen)
                     has_req_id = hasattr(self.screen, "current_req_id")
-                    
+
                     if is_inspect and has_req_id and self.screen.current_req_id == req_id:
                         self.screen.add_result(node_id, keys)
                 except Exception as e:

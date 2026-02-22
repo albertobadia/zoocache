@@ -398,7 +398,7 @@ impl Storage for LmdbStorage {
                 .and_then(|d| d.try_into().ok().map(u64::from_le_bytes))
                 .filter(|&ts| ts != 0);
 
-            if !expires_at.is_some_and(|ts| now_secs() > ts) {
+            if expires_at.is_none_or(|ts| now_secs() <= ts) {
                 results.push((key_str.to_string(), expires_at));
             }
         }
