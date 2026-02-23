@@ -54,3 +54,6 @@ class OpenTelemetryAdapter(TelemetryAdapter):
         prev = self._gauge_values.get(key, 0.0)
         self._get_metric("gauge", name).add(value - prev, labels or {})
         self._gauge_values[key] = value
+
+    def close(self) -> None:
+        pass

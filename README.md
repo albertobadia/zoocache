@@ -39,18 +39,69 @@
 
 ---
 
+## 🚀 Performance
+
+Zoocache is continuously benchmarked to ensure zero performance regressions. We track micro-latency, scaling with dependencies, and storage overhead.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="benchmarks/reports/comparison-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="benchmarks/reports/comparison-light.svg">
+    <img alt="ZooCache Performance" src="benchmarks/reports/comparison-light.svg" width="830">
+  </picture>
+</p>
+
+### Performance Context
+
+The benchmark results reflect ZooCache's specific architectural choices:
+
+- **Rust Core**: Implementing the core logic in Rust reduces the processing time spent on internal cache management and synchronization compared to pure Python implementations.
+- **Trie-based Invalidation**: Instead of matching and deleting individual keys, ZooCache uses a `PrefixTrie` to manage dependencies. Invalidation is performed by updating versions in the trie, which remains efficient even as the number of cached items grows.
+- **Pub/Sub Bus**: Using Redis Pub/Sub for the invalidation bus enables low-latency propagation of invalidation signals across multiple nodes, typically completing in under 1ms.
+
+> **Note**: Benchmark scale: 5,000 operations. Redis is running on **localhost** (loopback) to eliminate network latency interference and focus on internal engine overhead. ZooCache maintains O(1) tagging overhead and scales linearly. Latency values represent the end-to-end operation time including storage overhead.
+
+### Optional CLI & TUI
+
+Zoocache includes an optional CLI for real-time monitoring and cache management. It can be installed using the `cli` extra:
+
+```bash
+pip install "zoocache[cli]"
+```
+
+<p align="center">
+  <img alt="ZooCache CLI" src="docs/assets/cli.gif" width="830">
+</p>
+
+---
+
+## ⚖️ Comparison
+
+| Feature | **🐾 Zoocache** | **🔴 Redis (Raw)** | **🐶 Dogpile** | **diskcache** |
+| :--- | :--- | :--- | :--- | :--- |
+| **Invalidation** | 🧠 **Semantic (Trie)** | 🔧 Manual | 🔧 Manual | ⏳ TTL |
+| **Consistency** | 🛡️ **Causal (HLC)** | ❌ Eventual | ❌ No | ❌ No |
+| **Anti-Avalanche** | ✅ **Native** | ❌ No | ✅ Yes (Locks) | ❌ No |
+| **Performance** | 🚀 **Very High** | 🏎️ High | 🐢 Medium | 🐢 Medium |
+
+---
+
 ## ⚡ Quick Start
 
 ### Installation
 
-Using `pip`:
-```bash
-pip install zoocache
-```
-
 Using `uv` (recommended):
 ```bash
 uv add zoocache
+# Or with CLI support:
+uv add "zoocache[cli]"
+```
+
+Using `pip`:
+```bash
+pip install zoocache
+# Or with CLI support:
+pip install "zoocache[cli]"
 ```
 
 ### Simple Usage
@@ -89,6 +140,14 @@ def get_product_page(product_id: int, store_id: int):
 # invalidate("region:eu") -> Clears ALL prices in that region
 ```
 
+### Terminal User Interface (TUI)
+
+Zoocache comes with a built-in TUI to monitor metrics, view the caching trie, and run real-time commands such as cache invalidation. 
+
+```bash
+uv run zoocache cli
+```
+
 ---
 
 ## 📖 Documentation
@@ -100,6 +159,8 @@ Explore the deep dives into Zoocache's architecture and features:
 - [**Serialization Pipeline**](docs/serialization.md) - Efficient data handling with MsgPack and LZ4.
 - [**Concurrency & SingleFlight**](docs/concurrency.md) - Shielding your database from traffic spikes.
 - [**Distributed Consistency**](docs/consistency.md) - HLC, Redis Bus, and robust consistency models.
+- [**FastAPI Integration**](docs/fastapi.md) - Out-of-box caching for FastAPI endpoints.
+- [**Litestar Integration**](docs/litestar.md) - Out-of-box caching for Litestar endpoints.
 - [**Django Integration**](docs/django.md) - Using ZooCache with the Django ORM.
 - [**Django User Guide**](docs/django_user_guide.md) - Detailed guide for Django users.
 - [**Django Serializers Auto**](docs/django_serializers.md) - Automatic caching for Django REST Framework.
@@ -111,25 +172,6 @@ Explore the deep dives into Zoocache's architecture and features:
 
 ---
 
-## ⚖️ Comparison
-
-| Feature | **🐾 Zoocache** | **🔴 Redis (Raw)** | **🐶 Dogpile** | **diskcache** |
-| :--- | :--- | :--- | :--- | :--- |
-| **Invalidation** | 🧠 **Semantic (Trie)** | 🔧 Manual | 🔧 Manual | ⏳ TTL |
-| **Consistency** | 🛡️ **Causal (HLC)** | ❌ Eventual | ❌ No | ❌ No |
-| **Anti-Avalanche** | ✅ **Native** | ❌ No | ✅ Yes (Locks) | ❌ No |
-| **Performance** | 🚀 **Very High** | 🏎️ High | 🐢 Medium | 🐢 Medium |
-
----
-
-## 🚀 Performance
-
-Zoocache is continuously benchmarked to ensure zero performance regressions. We track micro-latency, scaling with dependencies, and storage overhead.
-
-<!-- AUTO-GENERATED-CONTENT:START (SOURCES:src=benchmarks/reports/benchmarks_summary.md) -->
-<!-- AUTO-GENERATED-CONTENT:END -->
-
----
 
 ## ❓ When to Use Zoocache
 

@@ -56,8 +56,6 @@ def setup_django_bench():
 
 
 def test_django_manager_baseline(benchmark):
-    """Benchmark raw Django manager performance with simulated 5ms latency."""
-
     @simulated_latency(ms=5)
     def run():
         return list(BBook.objects.filter(title__startswith="Book"))
@@ -66,8 +64,6 @@ def test_django_manager_baseline(benchmark):
 
 
 def test_django_manager_count_baseline(benchmark):
-    """Benchmark raw Django count performance with simulated 5ms latency."""
-
     @simulated_latency(ms=5)
     def run():
         return BBook.objects.filter(title__startswith="Book").count()
@@ -76,8 +72,6 @@ def test_django_manager_count_baseline(benchmark):
 
 
 def test_django_manager_join_baseline(benchmark):
-    """Benchmark raw Django join performance with simulated 5ms latency."""
-
     @simulated_latency(ms=5)
     def run():
         return BBook.objects.filter(author__name="Author").count()
@@ -86,33 +80,26 @@ def test_django_manager_join_baseline(benchmark):
 
 
 def test_django_cached_hit(benchmark):
-    """Benchmark ZooCacheManager hit performance (No latency added)."""
-    # Populate cache
     list(BBook.cached.filter(title__startswith="Book"))
 
     def run():
-        # This hits ZooCache, no simulated latency here
         return list(BBook.cached.filter(title__startswith="Book"))
 
     benchmark(run)
 
 
 def test_django_cached_miss(benchmark):
-    """Benchmark ZooCacheManager miss performance (includes simulated 5ms DB latency)."""
-
     def setup():
         zoocache.clear()
 
     @simulated_latency(ms=5)
     def run():
-        # This misses ZooCache and hits the DB
         return list(BBook.cached.filter(title__startswith="Book"))
 
     benchmark.pedantic(run, setup=setup, rounds=10, iterations=1)
 
 
 def test_django_cached_count_hit(benchmark):
-    """Benchmark ZooCacheManager hit performance for .count()."""
     BBook.cached.filter(title__startswith="Book").count()
 
     def run():
@@ -122,7 +109,6 @@ def test_django_cached_count_hit(benchmark):
 
 
 def test_django_complex_join_hit(benchmark):
-    """Benchmark ZooCacheManager hit performance for queries with JOINs."""
     BBook.cached.filter(author__name="Author").count()
 
     def run():

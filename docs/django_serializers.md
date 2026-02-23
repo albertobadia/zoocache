@@ -77,15 +77,3 @@ class MyCustomSerializer(CacheableSerializerMixin):
         return {"foo": "bar"}
 ```
 
-## Auditoría y Mejoras Técnicas Finales
-
-Se han aplicado las siguientes mejoras tras una revisión técnica profunda:
-
-- **Corrección Bug M2M**: Las relaciones Many-to-Many ahora invalidan correctamente la caché del serializador al conectarse directamente al modelo intermedio (*through model*).
-- **Seguridad de Claves**: Se ha implementado un sistema de claves basado en `module.ClassName` para evitar colisiones entre serializadores con el mismo nombre en distintas apps.
-- **Optimización de Rendimiento**: La introspección de modelos relacionados ahora se cachea a nivel de clase tras el primer uso, eliminando sobrecostes computacionales en cada petición.
-- **Robustez en Listas**: Mejorado el manejo de errores en `ListSerializer` para degradar graciosamente en caso de consultas SQL complejas no cacheables.
-
-### Verificación Final
-- **Tests Totales**: 87 PASSED.
-- **Regresión M2M**: Verificada específicamente en `tests/test_serializer_m2m.py`.

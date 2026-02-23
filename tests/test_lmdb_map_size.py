@@ -1,6 +1,6 @@
 import pytest
 
-from zoocache import cacheable, configure, reset
+from zoocache import StorageIsFull, cacheable, configure, reset
 
 
 @pytest.fixture(autouse=True)
@@ -40,5 +40,5 @@ def test_lmdb_map_size_too_small_raises(tmp_path):
     def get_data():
         return "fail"
 
-    with pytest.raises(RuntimeError, match="MDB_MAP_FULL"):
+    with pytest.raises(StorageIsFull, match="LMDB storage is full"):
         get_data()

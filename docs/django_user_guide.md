@@ -18,6 +18,12 @@ This guide covers how to use ZooCache with Django effectively.
 
 To use the Django ORM adapter, install ZooCache with the `django` extra:
 
+Using `uv` (recommended):
+```bash
+uv add "zoocache[django]"
+```
+
+Using `pip`:
 ```bash
 pip install zoocache[django]
 ```

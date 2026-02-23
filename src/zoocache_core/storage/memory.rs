@@ -1,6 +1,7 @@
+use crate::storage::SyncStorage;
 use crate::utils::now_secs;
 use dashmap::DashMap;
-use pyo3::PyResult;
+use pyo3::prelude::*;
 use std::sync::Arc;
 
 use super::{CacheEntry, Storage};
@@ -15,11 +16,18 @@ impl InMemoryStorage {
             map: DashMap::new(),
         }
     }
+
+    fn set_internal(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+        let expires_at = ttl.map(|t| now_secs() + t);
+        let last_accessed = now_secs();
+        self.map.insert(key, (entry, expires_at, last_accessed));
+        Ok(())
+    }
 }
 
-impl Storage for InMemoryStorage {
+impl SyncStorage for InMemoryStorage {
     #[inline]
-    fn get(&self, key: &str) -> super::StorageResult {
+    fn get(&self, _py: Python, key: &str) -> super::StorageResult {
         let mut entry = match self.map.get_mut(key) {
             Some(e) => e,
             None => return super::StorageResult::NotFound,
@@ -34,12 +42,8 @@ impl Storage for InMemoryStorage {
         super::StorageResult::Hit(Arc::clone(val), *expires_at)
     }
 
-    #[inline]
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
-        let expires_at = ttl.map(|t| now_secs() + t);
-        let last_accessed = now_secs();
-        self.map.insert(key, (entry, expires_at, last_accessed));
-        Ok(())
+        self.set_internal(key, entry, ttl)
     }
 
     #[inline]
@@ -90,5 +94,98 @@ impl Storage for InMemoryStorage {
         }
 
         Ok(to_evict)
+    }
+
+    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+        let mut results = Vec::new();
+        for entry in self.map.iter() {
+            let key = entry.key();
+            if key.starts_with(prefix) {
+                let (_, expires_at, _) = entry.value();
+                let is_expired = expires_at.is_some_and(|expires| now_secs() > expires);
+                if !is_expired {
+                    results.push((key.clone(), *expires_at));
+                }
+            }
+        }
+        results
+    }
+}
+
+use async_trait::async_trait;
+
+#[async_trait]
+impl Storage for InMemoryStorage {
+    #[inline]
+    async fn get(&self, key: &str) -> super::StorageResult {
+        Python::attach(|py| SyncStorage::get(self, py, key))
+    }
+
+    fn try_get_sync(&self, py: Python, key: &str) -> Option<super::StorageResult> {
+        Some(SyncStorage::get(self, py, key))
+    }
+
+    async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
+        SyncStorage::set(self, key, entry, ttl)
+    }
+
+    #[inline]
+    async fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()> {
+        SyncStorage::touch_batch(self, updates)
+    }
+
+    #[inline]
+    async fn remove(&self, key: &str) -> PyResult<()> {
+        SyncStorage::remove(self, key)
+    }
+
+    async fn clear(&self) -> PyResult<()> {
+        SyncStorage::clear(self)
+    }
+
+    async fn len(&self) -> usize {
+        SyncStorage::len(self)
+    }
+
+    async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
+        SyncStorage::evict_lru(self, count)
+    }
+
+    async fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
+        SyncStorage::scan_keys(self, prefix)
+    }
+
+    fn try_set_sync(
+        &self,
+        _py: Python,
+        key: String,
+        entry: Arc<CacheEntry>,
+        ttl: Option<u64>,
+    ) -> PyResult<()> {
+        SyncStorage::set(self, key, entry, ttl)
+    }
+
+    fn try_remove_sync(&self, key: &str) -> PyResult<()> {
+        SyncStorage::remove(self, key)
+    }
+
+    fn try_clear_sync(&self) -> PyResult<()> {
+        SyncStorage::clear(self)
+    }
+
+    fn try_len_sync(&self) -> Option<usize> {
+        Some(SyncStorage::len(self))
+    }
+
+    fn try_evict_lru_sync(&self, count: usize) -> Option<PyResult<Vec<String>>> {
+        Some(SyncStorage::evict_lru(self, count))
+    }
+
+    fn try_scan_keys_sync(&self, prefix: &str) -> Option<Vec<(String, Option<u64>)>> {
+        Some(SyncStorage::scan_keys(self, prefix))
+    }
+
+    fn is_sync_storage(&self) -> bool {
+        true
     }
 }

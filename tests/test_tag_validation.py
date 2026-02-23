@@ -22,6 +22,20 @@ def test_tag_validation_simple():
 
     with pytest.raises(InvalidTag):
         invalidate("")
+    with pytest.raises(InvalidTag, match="cannot start or end with"):
+        invalidate(":tag")
+    with pytest.raises(InvalidTag, match="cannot start or end with"):
+        invalidate("tag:")
+    with pytest.raises(InvalidTag, match="cannot start or end with"):
+        invalidate(".tag")
+    with pytest.raises(InvalidTag, match="cannot start or end with"):
+        invalidate("tag.")
+
+    with pytest.raises(InvalidTag, match="Tag length exceeded"):
+        invalidate("a" * 257)
+
+    # Mixed valid chars
+    invalidate("tag.sub:sub_2")
 
 
 def test_dependency_validation():

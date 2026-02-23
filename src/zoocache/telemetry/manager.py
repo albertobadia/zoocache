@@ -37,3 +37,9 @@ class TelemetryManager:
 
     def time_operation(self, name: str, labels: dict[str, str] | None = None) -> TimerContext:
         return TimerContext(self, name, labels)
+
+    def close(self) -> None:
+        if not self._enabled:
+            return
+        for adapter in self._adapters:
+            adapter.close()

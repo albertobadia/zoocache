@@ -19,13 +19,27 @@ def fast_func(x):
 
 
 def test_hit_latency(benchmark):
-    """Benchmark the overhead of a cache hit."""
-    # pytest-benchmark automatically handles warmup and iterations
     benchmark(fast_func, 1)
 
 
+def test_bulk_read(benchmark):
+    @cacheable(namespace="bulk")
+    def get_data(i):
+        return i
+
+    def setup():
+        clear()
+        for i in range(1000):
+            get_data(i)
+
+    def do_read():
+        for i in range(1000):
+            get_data(i)
+
+    benchmark.pedantic(do_read, setup=setup, rounds=50, iterations=1)
+
+
 def test_thundering_herd(benchmark):
-    """Benchmark SingleFlight behavior under high concurrency."""
     calls = {"count": 0}
 
     @cacheable(namespace="herd")
@@ -46,14 +60,11 @@ def test_thundering_herd(benchmark):
             t.join()
         return calls["count"]
 
-    # Use pedantic for complex setups
     count = benchmark.pedantic(run_concurrent, rounds=5, iterations=1)
-    # We also verify correctness
     assert count == 1
 
 
 def test_invalidation_efficiency_prefix(benchmark):
-    """Benchmark invalidating 1000 entries via a single parent prefix."""
     num_entries = 1000
 
     @cacheable(deps=lambda i: [f"org:1:user:{i}"])

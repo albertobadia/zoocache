@@ -14,8 +14,11 @@ class MockAdapter(TelemetryAdapter):
     def observe(self, name, value, labels=None):
         self.observations.append((name, value, labels))
 
-    def set_gauge(self, name, value, labels=None):
+    def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         self.gauges.append((name, value, labels))
+
+    def close(self) -> None:
+        pass
 
 
 def test_telemetry_manager_disabled():

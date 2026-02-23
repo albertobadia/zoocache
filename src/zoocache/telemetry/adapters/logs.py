@@ -27,6 +27,9 @@ class LogAdapter(TelemetryAdapter):
     def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         self._log("gauge", name, value, labels)
 
+    def close(self) -> None:
+        pass
+
     def _log(self, type_: str, name: str, value: float, labels: dict[str, str] | None) -> None:
         if not self._logger.isEnabledFor(self._level):
             return

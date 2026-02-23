@@ -51,6 +51,8 @@ nav:
       - Overview: django.md
       - User Guide: django_user_guide.md
       - Django Serializers Auto: django_serializers.md
+  - FastAPI Integration: fastapi.md
+  - Litestar Integration: litestar.md
   - Architecture: architecture.md
   - Serialization: serialization.md
   - Reliability: reliability.md

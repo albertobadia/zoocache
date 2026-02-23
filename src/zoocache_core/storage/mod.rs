@@ -89,8 +89,10 @@ pub(crate) enum StorageResult {
     NotFound,
 }
 
-pub(crate) trait Storage: Send + Sync {
-    fn get(&self, key: &str) -> StorageResult;
+use async_trait::async_trait;
+
+pub(crate) trait SyncStorage: Send + Sync {
+    fn get(&self, py: Python, key: &str) -> StorageResult;
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
     fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
         let entry = Python::attach(|py| CacheEntry::deserialize(py, &data))?;
@@ -101,4 +103,67 @@ pub(crate) trait Storage: Send + Sync {
     fn clear(&self) -> PyResult<()>;
     fn len(&self) -> usize;
     fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
+    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)>;
+    fn needs_tti_worker(&self) -> bool {
+        false
+    }
+}
+
+#[async_trait]
+pub(crate) trait Storage: Send + Sync {
+    async fn get(&self, key: &str) -> StorageResult;
+    async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
+    async fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        let entry = Python::attach(|py| CacheEntry::deserialize(py, &data))?;
+        self.set(key, Arc::new(entry), ttl).await
+    }
+    async fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
+    async fn remove(&self, key: &str) -> PyResult<()>;
+    async fn clear(&self) -> PyResult<()>;
+    async fn len(&self) -> usize;
+    async fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
+    async fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)>;
+    fn needs_tti_worker(&self) -> bool {
+        false
+    }
+    fn check_and_update_touch_gate(&self) -> bool {
+        true
+    }
+    fn try_get_sync(&self, _py: Python, _key: &str) -> Option<StorageResult> {
+        None
+    }
+    fn try_set_sync(
+        &self,
+        _py: Python,
+        _key: String,
+        _entry: Arc<CacheEntry>,
+        _ttl: Option<u64>,
+    ) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Sync set not supported",
+        ))
+    }
+    fn try_remove_sync(&self, _key: &str) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Sync remove not supported",
+        ))
+    }
+    fn try_clear_sync(&self) -> PyResult<()> {
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Sync clear not supported",
+        ))
+    }
+    fn try_len_sync(&self) -> Option<usize> {
+        None
+    }
+    fn try_evict_lru_sync(&self, _count: usize) -> Option<PyResult<Vec<String>>> {
+        None
+    }
+    #[allow(dead_code)]
+    fn try_scan_keys_sync(&self, _prefix: &str) -> Option<Vec<(String, Option<u64>)>> {
+        None
+    }
+    fn is_sync_storage(&self) -> bool {
+        false
+    }
 }
