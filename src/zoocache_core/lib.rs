@@ -389,7 +389,7 @@ impl Core {
 
         let current_global_version = self.trie.get_global_version();
         if entry.trie_version == current_global_version {
-            if self.storage.needs_tti_worker() {
+            if self.storage.needs_tti_worker() && self.storage.check_and_update_touch_gate() {
                 self.tti_touch(key, self.default_ttl);
             }
             return Ok(Some(entry.value.clone_ref(py)));
@@ -431,7 +431,7 @@ impl Core {
 
         let current_global_version = self.trie.get_global_version();
         if entry.trie_version == current_global_version {
-            if self.storage.needs_tti_worker() {
+            if self.storage.needs_tti_worker() && self.storage.check_and_update_touch_gate() {
                 self.tti_touch(key, self.default_ttl);
             }
             return Ok((Some(entry.value.clone_ref(py)), false, true));

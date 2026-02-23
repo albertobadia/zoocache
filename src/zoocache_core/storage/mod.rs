@@ -92,7 +92,7 @@ pub(crate) enum StorageResult {
 use async_trait::async_trait;
 
 pub(crate) trait SyncStorage: Send + Sync {
-    fn get(&self, key: &str) -> StorageResult;
+    fn get(&self, py: Python, key: &str) -> StorageResult;
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
     fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
         let entry = Python::attach(|py| CacheEntry::deserialize(py, &data))?;
@@ -126,9 +126,10 @@ pub(crate) trait Storage: Send + Sync {
     fn needs_tti_worker(&self) -> bool {
         false
     }
-    fn try_get_sync(&self, py: Python, key: &str) -> Option<StorageResult> {
-        let _ = py;
-        let _ = key;
+    fn check_and_update_touch_gate(&self) -> bool {
+        true
+    }
+    fn try_get_sync(&self, _py: Python, _key: &str) -> Option<StorageResult> {
         None
     }
     fn try_set_sync(

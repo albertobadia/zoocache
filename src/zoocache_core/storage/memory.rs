@@ -27,7 +27,7 @@ impl InMemoryStorage {
 
 impl SyncStorage for InMemoryStorage {
     #[inline]
-    fn get(&self, key: &str) -> super::StorageResult {
+    fn get(&self, _py: Python, key: &str) -> super::StorageResult {
         let mut entry = match self.map.get_mut(key) {
             Some(e) => e,
             None => return super::StorageResult::NotFound,
@@ -118,11 +118,11 @@ use async_trait::async_trait;
 impl Storage for InMemoryStorage {
     #[inline]
     async fn get(&self, key: &str) -> super::StorageResult {
-        SyncStorage::get(self, key)
+        Python::attach(|py| SyncStorage::get(self, py, key))
     }
 
-    fn try_get_sync(&self, _py: Python, key: &str) -> Option<super::StorageResult> {
-        Some(SyncStorage::get(self, key))
+    fn try_get_sync(&self, py: Python, key: &str) -> Option<super::StorageResult> {
+        Some(SyncStorage::get(self, py, key))
     }
 
     async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {

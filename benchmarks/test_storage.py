@@ -5,17 +5,28 @@ import pytest
 
 from zoocache import cacheable, configure, reset
 
-DB_PATH = "./bench_lmdb_pytest"
+DB_PATH_BASELINE = "./bench_lmdb_baseline"
+DB_PATH_TTI = "./bench_lmdb_tti"
 
 
 @pytest.fixture(scope="module")
-def lmdb_setup():
-    if os.path.exists(DB_PATH):
-        shutil.rmtree(DB_PATH)
-    os.makedirs(DB_PATH)
+def lmdb_baseline_setup():
+    if os.path.exists(DB_PATH_BASELINE):
+        shutil.rmtree(DB_PATH_BASELINE)
+    os.makedirs(DB_PATH_BASELINE)
     yield
-    if os.path.exists(DB_PATH):
-        shutil.rmtree(DB_PATH)
+    if os.path.exists(DB_PATH_BASELINE):
+        shutil.rmtree(DB_PATH_BASELINE)
+
+
+@pytest.fixture(scope="module")
+def lmdb_tti_setup():
+    if os.path.exists(DB_PATH_TTI):
+        shutil.rmtree(DB_PATH_TTI)
+    os.makedirs(DB_PATH_TTI)
+    yield
+    if os.path.exists(DB_PATH_TTI):
+        shutil.rmtree(DB_PATH_TTI)
 
 
 def run_storage_bench(benchmark, name, storage_url, ttl=None):
@@ -44,12 +55,12 @@ def test_storage_memory_tti(benchmark):
     run_storage_bench(benchmark, "Memory_TTI", None, ttl=3600)
 
 
-def test_storage_lmdb_baseline(benchmark, lmdb_setup):
-    run_storage_bench(benchmark, "LMDB", f"lmdb://{DB_PATH}")
+def test_storage_lmdb_baseline(benchmark, lmdb_baseline_setup):
+    run_storage_bench(benchmark, "LMDB", f"lmdb://{DB_PATH_BASELINE}")
 
 
-def test_storage_lmdb_tti(benchmark, lmdb_setup):
-    run_storage_bench(benchmark, "LMDB_TTI", f"lmdb://{DB_PATH}", ttl=3600)
+def test_storage_lmdb_tti(benchmark, lmdb_tti_setup):
+    run_storage_bench(benchmark, "LMDB_TTI", f"lmdb://{DB_PATH_TTI}", ttl=3600)
 
 
 def test_storage_redis_baseline(benchmark):

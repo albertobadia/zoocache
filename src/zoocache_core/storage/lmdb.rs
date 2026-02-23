@@ -9,7 +9,7 @@ use lmdb::{
 use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 pub(crate) struct LmdbStorage {
     env: Arc<Environment>,
@@ -19,10 +19,11 @@ pub(crate) struct LmdbStorage {
     db_lru_index: Database,
     db_meta: Database,
     count: Arc<AtomicUsize>,
+    last_touch_secs: AtomicU64,
 }
 
 impl SyncStorage for LmdbStorage {
-    fn get(&self, key: &str) -> StorageResult {
+    fn get(&self, py: Python, key: &str) -> StorageResult {
         let env = &self.env;
         let db_main = self.db_main;
         let db_ttls = self.db_ttls;
@@ -47,16 +48,11 @@ impl SyncStorage for LmdbStorage {
             Err(_) => return StorageResult::NotFound,
         };
 
-        match Python::try_attach(|py| {
-            CacheEntry::deserialize(py, data)
-                .ok()
-                .map(Arc::new)
-                .map(|e| StorageResult::Hit(e, expires_at))
-                .unwrap_or(StorageResult::NotFound)
-        }) {
-            Some(result) => result,
-            None => StorageResult::NotFound,
-        }
+        CacheEntry::deserialize(py, data)
+            .ok()
+            .map(Arc::new)
+            .map(|e| StorageResult::Hit(e, expires_at))
+            .unwrap_or(StorageResult::NotFound)
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
@@ -309,6 +305,7 @@ impl LmdbStorage {
             db_lru_index,
             db_meta,
             count: Arc::new(AtomicUsize::new(count)),
+            last_touch_secs: AtomicU64::new(0),
         })
     }
 
@@ -426,11 +423,11 @@ impl LmdbStorage {
 #[async_trait]
 impl Storage for LmdbStorage {
     async fn get(&self, key: &str) -> StorageResult {
-        SyncStorage::get(self, key)
+        Python::attach(|py| SyncStorage::get(self, py, key))
     }
 
-    fn try_get_sync(&self, _py: Python, key: &str) -> Option<StorageResult> {
-        Some(SyncStorage::get(self, key))
+    fn try_get_sync(&self, py: Python, key: &str) -> Option<StorageResult> {
+        Some(SyncStorage::get(self, py, key))
     }
 
     async fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
@@ -467,6 +464,13 @@ impl Storage for LmdbStorage {
 
     fn needs_tti_worker(&self) -> bool {
         SyncStorage::needs_tti_worker(self)
+    }
+
+    fn check_and_update_touch_gate(&self) -> bool {
+        // Global 1s gate: safe because the TTI worker deduplicates per key at lru_update_interval.
+        let now = now_secs();
+        let last = self.last_touch_secs.swap(now, Ordering::Relaxed);
+        now > last
     }
 
     fn try_set_sync(
