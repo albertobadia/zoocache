@@ -77,6 +77,23 @@ enum WorkerMsg {
     FlushMetrics(HashMap<String, f64>),
 }
 
+struct TtiState {
+    tx: SyncSender<WorkerMsg>,
+    dropped: AtomicU64,
+}
+
+impl TtiState {
+    fn touch(&self, key: &str, ttl: Option<u64>) {
+        if self
+            .tx
+            .try_send(WorkerMsg::Touch(key.to_string(), ttl))
+            .is_err()
+        {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
 #[pyclass]
 struct Core {
     storage: Arc<dyn Storage>,
@@ -85,10 +102,10 @@ struct Core {
     flights: Arc<DashMap<String, Arc<Flight>>>,
     default_ttl: Option<u64>,
     max_entries: Option<usize>,
-    tti_tx: Option<SyncSender<WorkerMsg>>,
-    dropped_tti_msgs: AtomicU64,
+    tti_state: Option<Arc<TtiState>>,
     flight_timeout: u64,
     silent_errors: Arc<AtomicU64>,
+    bus_is_remote: bool,
 }
 
 #[pymethods]
@@ -184,7 +201,7 @@ impl Core {
             None => Arc::new(LocalBus::new()),
         };
 
-        let mut tti_tx = None;
+        let mut tti_state = None;
         let tti_flush_secs_val = tti_flush_secs.unwrap_or(30);
         let flights = Arc::new(DashMap::new());
         let flight_timeout_val = flight_timeout.unwrap_or(60);
@@ -192,6 +209,11 @@ impl Core {
 
         if read_extend_ttl {
             let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
+            tti_state = Some(Arc::new(TtiState {
+                tx: tx.clone(),
+                dropped: AtomicU64::new(0),
+            }));
+
             let storage_worker = Arc::clone(&storage);
             let trie_worker = trie.clone();
             let bus_worker = Arc::clone(&bus);
@@ -225,7 +247,7 @@ impl Core {
                         let msg = match rx.try_recv() {
                             Ok(m) => Some(m),
                             Err(mpsc::TryRecvError::Empty) => {
-                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                tokio::time::sleep(Duration::from_millis(10)).await;
                                 None
                             }
                             Err(mpsc::TryRecvError::Disconnected) => break,
@@ -325,7 +347,6 @@ impl Core {
                     }
                 });
             });
-            tti_tx = Some(tx);
         }
 
         Ok(Self {
@@ -335,15 +356,21 @@ impl Core {
             flights,
             default_ttl,
             max_entries,
-            tti_tx,
-            dropped_tti_msgs: AtomicU64::new(0),
+            tti_state,
             flight_timeout: flight_timeout_val,
             silent_errors,
+            bus_is_remote,
         })
     }
 
-    fn get_sync<'py>(&self, py: Python<'py>, key: String) -> PyResult<Option<Py<PyAny>>> {
-        let status = self.storage.try_get_sync(py, &key);
+    fn tti_touch(&self, key: &str, ttl: Option<u64>) {
+        if let Some(state) = &self.tti_state {
+            state.touch(key, ttl);
+        }
+    }
+
+    fn get_sync<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
+        let status = self.storage.try_get_sync(py, key);
         let status = match status {
             Some(s) => s,
             None => return Ok(None),
@@ -352,8 +379,8 @@ impl Core {
         let (entry, _expires_at) = match status {
             storage::StorageResult::Hit(e, exp) => (e, exp),
             storage::StorageResult::Expired => {
-                if let Some(tx) = &self.tti_tx {
-                    let _ = tx.try_send(WorkerMsg::Delete(key));
+                if let Some(state) = &self.tti_state {
+                    let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
                 }
                 return Ok(None);
             }
@@ -362,19 +389,17 @@ impl Core {
 
         let current_global_version = self.trie.get_global_version();
         if entry.trie_version == current_global_version {
-            if self.storage.needs_tti_worker()
-                && let Some(tx) = &self.tti_tx
-            {
-                let _ = tx.try_send(WorkerMsg::Touch(key, self.default_ttl));
+            if self.storage.needs_tti_worker() {
+                self.tti_touch(key, self.default_ttl);
             }
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
         let valid = validate_dependencies(&self.trie, &entry.dependencies);
         if !valid {
-            let _ = self.storage.try_remove_sync(&key);
-            if let Some(tx) = &self.tti_tx {
-                let _ = tx.try_send(WorkerMsg::Delete(key));
+            let _ = self.storage.try_remove_sync(key);
+            if let Some(state) = &self.tti_state {
+                let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
             }
             return Ok(None);
         }
@@ -385,9 +410,9 @@ impl Core {
     fn get_or_entry_sync<'py>(
         &self,
         py: Python<'py>,
-        key: String,
+        key: &str,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        let status = self.storage.try_get_sync(py, &key);
+        let status = self.storage.try_get_sync(py, key);
         let status = match status {
             Some(s) => s,
             None => return Ok((None, false, false)),
@@ -396,8 +421,8 @@ impl Core {
         let (entry, _expires_at) = match status {
             storage::StorageResult::Hit(e, exp) => (e, exp),
             storage::StorageResult::Expired => {
-                if let Some(tx) = &self.tti_tx {
-                    let _ = tx.try_send(WorkerMsg::Delete(key));
+                if let Some(state) = &self.tti_state {
+                    let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
                 }
                 return Ok((None, false, false));
             }
@@ -406,19 +431,17 @@ impl Core {
 
         let current_global_version = self.trie.get_global_version();
         if entry.trie_version == current_global_version {
-            if self.storage.needs_tti_worker()
-                && let Some(tx) = &self.tti_tx
-            {
-                let _ = tx.try_send(WorkerMsg::Touch(key, self.default_ttl));
+            if self.storage.needs_tti_worker() {
+                self.tti_touch(key, self.default_ttl);
             }
             return Ok((Some(entry.value.clone_ref(py)), false, true));
         }
 
         let valid = validate_dependencies(&self.trie, &entry.dependencies);
         if !valid {
-            let _ = self.storage.try_remove_sync(&key);
-            if let Some(tx) = &self.tti_tx {
-                let _ = tx.try_send(WorkerMsg::Delete(key));
+            let _ = self.storage.try_remove_sync(key);
+            if let Some(state) = &self.tti_state {
+                let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
             }
             return Ok((None, false, false));
         }
@@ -431,7 +454,7 @@ impl Core {
         py: Python<'py>,
         key: String,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        if let Ok(res @ (_, _, true)) = self.get_or_entry_sync(py, key.clone()) {
+        if let Ok(res @ (_, _, true)) = self.get_or_entry_sync(py, &key) {
             return Ok(res);
         }
 
@@ -440,7 +463,7 @@ impl Core {
         let trie = self.trie.clone();
         let flight_timeout = self.flight_timeout;
         let default_ttl = self.default_ttl;
-        let tti_tx = self.tti_tx.clone();
+        let tti_state = self.tti_state.clone();
 
         py.detach(|| {
             RUNTIME.block_on(async move {
@@ -468,8 +491,8 @@ impl Core {
                 let (entry, _expires_at) = match status {
                     storage::StorageResult::Hit(e, exp) => (e, exp),
                     storage::StorageResult::Expired => {
-                        if let Some(tx) = tti_tx {
-                            let _ = tx.try_send(WorkerMsg::Delete(key.clone()));
+                        if let Some(state) = &tti_state {
+                            let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
                         }
                         return Ok((None, true, false));
                     }
@@ -496,10 +519,8 @@ impl Core {
                 }
 
                 if valid_hit {
-                    if storage.needs_tti_worker()
-                        && let Some(tx) = tti_tx
-                    {
-                        let _ = tx.try_send(WorkerMsg::Touch(key.clone(), default_ttl));
+                    if let Some(state) = &tti_state {
+                        state.touch(&key, default_ttl);
                     }
                     let val_clone =
                         Python::attach(|inner_py| value.as_ref().map(|v| v.clone_ref(inner_py)));
@@ -518,7 +539,7 @@ impl Core {
         let trie = self.trie.clone();
         let flight_timeout = self.flight_timeout;
         let default_ttl = self.default_ttl;
-        let tti_tx = self.tti_tx.clone();
+        let tti_state = self.tti_state.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             // First check if it's already in flight
@@ -545,8 +566,8 @@ impl Core {
             let (entry, _expires_at) = match status {
                 storage::StorageResult::Hit(e, exp) => (e, exp),
                 storage::StorageResult::Expired => {
-                    if let Some(tx) = tti_tx {
-                        let _ = tx.try_send(WorkerMsg::Delete(key.clone()));
+                    if let Some(state) = &tti_state {
+                        let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
                     }
                     return Ok((None, true, false));
                 }
@@ -575,10 +596,8 @@ impl Core {
             }
 
             if valid_hit {
-                if storage.needs_tti_worker()
-                    && let Some(tx) = tti_tx
-                {
-                    let _ = tx.try_send(WorkerMsg::Touch(key.clone(), default_ttl));
+                if let Some(state) = &tti_state {
+                    state.touch(&key, default_ttl);
                 }
                 complete_flight(
                     &flights,
@@ -599,14 +618,14 @@ impl Core {
     }
 
     fn get<'py>(&self, py: Python<'py>, key: String) -> PyResult<Option<Py<PyAny>>> {
-        if let Ok(Some(val)) = self.get_sync(py, key.clone()) {
+        if let Ok(Some(val)) = self.get_sync(py, &key) {
             return Ok(Some(val));
         }
 
         let storage = Arc::clone(&self.storage);
         let trie = self.trie.clone();
         let default_ttl = self.default_ttl;
-        let tti_tx = self.tti_tx.clone();
+        let tti_state = self.tti_state.clone();
 
         py.detach(|| {
             RUNTIME.block_on(async move {
@@ -615,8 +634,8 @@ impl Core {
                 let (entry, expires_at) = match status {
                     storage::StorageResult::Hit(e, exp) => (e, exp),
                     storage::StorageResult::Expired => {
-                        if let Some(tx) = tti_tx {
-                            let _ = tx.try_send(WorkerMsg::Delete(key.clone()));
+                        if let Some(state) = &tti_state {
+                            let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
                         }
                         return Ok(None);
                     }
@@ -625,10 +644,8 @@ impl Core {
 
                 let current_global_version = trie.get_global_version();
                 if entry.trie_version == current_global_version {
-                    if storage.needs_tti_worker()
-                        && let Some(tx) = tti_tx
-                    {
-                        let _ = tx.try_send(WorkerMsg::Touch(key.clone(), default_ttl));
+                    if let Some(state) = &tti_state {
+                        state.touch(&key, default_ttl);
                     }
                     return Ok(Some(Python::attach(|inner_py| {
                         entry.value.clone_ref(inner_py)
@@ -651,14 +668,12 @@ impl Core {
                     });
                     if let Ok(data) = Python::attach(|inner_py| updated_entry.serialize(inner_py)) {
                         let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
-                        if let Some(tx) = tti_tx {
-                            let _ = tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));
+                        if let Some(state) = &tti_state {
+                            let _ = state.tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));
                         }
                     }
-                } else if storage.needs_tti_worker()
-                    && let Some(tx) = tti_tx
-                {
-                    let _ = tx.try_send(WorkerMsg::Touch(key.clone(), default_ttl));
+                } else if let Some(state) = &tti_state {
+                    state.touch(&key, default_ttl);
                 }
 
                 Ok(Some(Python::attach(|inner_py| {
@@ -672,7 +687,7 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let trie = self.trie.clone();
         let default_ttl = self.default_ttl;
-        let tti_tx = self.tti_tx.clone();
+        let tti_state = self.tti_state.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let status = storage.get(&key).await;
@@ -680,8 +695,8 @@ impl Core {
             let (entry, expires_at) = match status {
                 storage::StorageResult::Hit(e, exp) => (e, exp),
                 storage::StorageResult::Expired => {
-                    if let Some(tx) = tti_tx {
-                        let _ = tx.try_send(WorkerMsg::Delete(key.clone()));
+                    if let Some(state) = &tti_state {
+                        let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
                     }
                     return Ok(Python::attach(|py| py.None()));
                 }
@@ -690,10 +705,8 @@ impl Core {
 
             let current_global_version = trie.get_global_version();
             if entry.trie_version == current_global_version {
-                if storage.needs_tti_worker()
-                    && let Some(tx) = tti_tx
-                {
-                    let _ = tx.try_send(WorkerMsg::Touch(key.clone(), default_ttl));
+                if let Some(state) = &tti_state {
+                    state.touch(&key, default_ttl);
                 }
                 return Ok(Python::attach(|py| entry.value.clone_ref(py)));
             }
@@ -714,14 +727,12 @@ impl Core {
                 });
                 if let Ok(data) = Python::attach(|py| updated_entry.serialize(py)) {
                     let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
-                    if let Some(tx) = tti_tx {
-                        let _ = tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));
+                    if let Some(state) = &tti_state {
+                        let _ = state.tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));
                     }
                 }
-            } else if storage.needs_tti_worker()
-                && let Some(tx) = tti_tx
-            {
-                let _ = tx.try_send(WorkerMsg::Touch(key.clone(), default_ttl));
+            } else if let Some(state) = &tti_state {
+                state.touch(&key, default_ttl);
             }
 
             Ok(Python::attach(|py| entry.value.clone_ref(py)))
@@ -754,14 +765,15 @@ impl Core {
 
         // Fast path for local storages
         if let Ok(()) = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl) {
-            if let Some(max) = max_entries {
-                let current = py.detach(|| RUNTIME.block_on(storage.len()));
-                if current > max {
-                    let to_evict = current - max + (max / 10).max(1);
-                    py.detach(|| RUNTIME.block_on(storage.evict_lru(to_evict)))
-                        .ok();
-                    trie.prune(0);
+            if let Some(max) = max_entries
+                && let Some(current) = storage.try_len_sync()
+                && current > max
+            {
+                let to_evict = current - max + (max / 10).max(1);
+                if let Some(Ok(evicted)) = storage.try_evict_lru_sync(to_evict) {
+                    let _ = evicted;
                 }
+                trie.prune(0);
             }
             return Ok(());
         }
@@ -807,16 +819,32 @@ impl Core {
         let max_entries = self.max_entries;
         let trie = self.trie.clone();
 
+        // Fast path: try sync len/evict for local storages
+        let sync_evict = max_entries.and_then(|max| {
+            storage.try_len_sync().and_then(|current| {
+                if current > max {
+                    let to_evict = current - max + (max / 10).max(1);
+                    storage.try_evict_lru_sync(to_evict)
+                } else {
+                    None
+                }
+            })
+        });
+
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             storage.set(key, entry, final_ttl).await?;
 
-            if let Some(max) = max_entries {
-                let current = storage.len().await;
-                if current > max {
-                    let to_evict = current - max + (max / 10).max(1);
-                    storage.evict_lru(to_evict).await?;
+            if let Some(evicted) = sync_evict {
+                if let Ok(_keys) = evicted {
                     trie.prune(0);
                 }
+            } else if let Some(max) = max_entries
+                && let Some(current) = storage.try_len_sync()
+                && current > max
+            {
+                let to_evict = current - max + (max / 10).max(1);
+                storage.evict_lru(to_evict).await?;
+                trie.prune(0);
             }
             Ok(Python::attach(|py| py.None()))
         })
@@ -825,14 +853,17 @@ impl Core {
     fn invalidate(&self, py: Python, tag: String) -> PyResult<()> {
         validate_tag(&tag)?;
         let new_ver = self.trie.invalidate(&tag);
-        let bus = Arc::clone(&self.bus);
 
-        // Notify bus in background or synchronously if local
-        py.detach(|| {
-            RUNTIME.block_on(async move {
-                bus.publish(&tag, new_ver).await;
+        // For local bus, publish is a no-op - skip async overhead entirely
+        // For remote bus, we need to publish asynchronously
+        if self.bus_is_remote {
+            let bus = Arc::clone(&self.bus);
+            py.detach(|| {
+                RUNTIME.spawn(async move {
+                    bus.publish(&tag, new_ver).await;
+                });
             });
-        });
+        }
         Ok(())
     }
 
@@ -877,8 +908,8 @@ impl Core {
     }
 
     fn request_prune(&self, max_age_secs: u64) {
-        if let Some(tx) = &self.tti_tx {
-            let _ = tx.try_send(WorkerMsg::Prune(max_age_secs));
+        if let Some(state) = &self.tti_state {
+            let _ = state.tx.try_send(WorkerMsg::Prune(max_age_secs));
         }
     }
 
@@ -891,7 +922,11 @@ impl Core {
     }
 
     fn len(&self) -> usize {
-        RUNTIME.block_on(self.storage.len())
+        if self.storage.is_sync_storage() {
+            self.storage.try_len_sync().unwrap_or(0)
+        } else {
+            RUNTIME.block_on(self.storage.len())
+        }
     }
 
     fn version(&self) -> String {
@@ -899,7 +934,10 @@ impl Core {
     }
 
     fn tti_dropped_messages(&self) -> u64 {
-        self.dropped_tti_msgs.load(Ordering::Relaxed)
+        self.tti_state
+            .as_ref()
+            .map(|s| s.dropped.load(Ordering::Relaxed))
+            .unwrap_or(0)
     }
 
     fn silent_errors(&self) -> u64 {
@@ -911,8 +949,8 @@ impl Core {
     }
 
     fn flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {
-        if let Some(tx) = &self.tti_tx {
-            let _ = tx.try_send(WorkerMsg::FlushMetrics(metrics));
+        if let Some(state) = &self.tti_state {
+            let _ = state.tx.try_send(WorkerMsg::FlushMetrics(metrics));
         }
         Ok(())
     }

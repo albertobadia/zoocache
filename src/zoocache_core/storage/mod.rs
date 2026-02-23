@@ -91,6 +91,24 @@ pub(crate) enum StorageResult {
 
 use async_trait::async_trait;
 
+pub(crate) trait SyncStorage: Send + Sync {
+    fn get(&self, key: &str) -> StorageResult;
+    fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()>;
+    fn set_raw(&self, key: String, data: Vec<u8>, ttl: Option<u64>) -> PyResult<()> {
+        let entry = Python::attach(|py| CacheEntry::deserialize(py, &data))?;
+        self.set(key, Arc::new(entry), ttl)
+    }
+    fn touch_batch(&self, updates: Vec<(String, Option<u64>)>) -> PyResult<()>;
+    fn remove(&self, key: &str) -> PyResult<()>;
+    fn clear(&self) -> PyResult<()>;
+    fn len(&self) -> usize;
+    fn evict_lru(&self, count: usize) -> PyResult<Vec<String>>;
+    fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)>;
+    fn needs_tti_worker(&self) -> bool {
+        false
+    }
+}
+
 #[async_trait]
 pub(crate) trait Storage: Send + Sync {
     async fn get(&self, key: &str) -> StorageResult;
@@ -133,5 +151,18 @@ pub(crate) trait Storage: Send + Sync {
         Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
             "Sync clear not supported",
         ))
+    }
+    fn try_len_sync(&self) -> Option<usize> {
+        None
+    }
+    fn try_evict_lru_sync(&self, _count: usize) -> Option<PyResult<Vec<String>>> {
+        None
+    }
+    #[allow(dead_code)]
+    fn try_scan_keys_sync(&self, _prefix: &str) -> Option<Vec<(String, Option<u64>)>> {
+        None
+    }
+    fn is_sync_storage(&self) -> bool {
+        false
     }
 }

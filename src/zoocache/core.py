@@ -49,12 +49,12 @@ class CacheManager:
 
     def check_telemetry(self) -> None:
         now = time.monotonic()
-        if now - self._last_telemetry_check < 1.0:
+        # Fast exit if not enough time passed
+        if now - self._last_telemetry_check < 5.0:
             return
 
         with self._lock:
-            # Re-check after acquiring lock to avoid race conditions
-            if now - self._last_telemetry_check < 1.0:
+            if now - self._last_telemetry_check < 5.0:
                 return
             self._last_telemetry_check = now
             if self.core:
@@ -64,11 +64,11 @@ class CacheManager:
                     self.telemetry.increment("cache_tti_overflows_total", delta)
                     self._last_tti_dropped = current_dropped
 
-            current_silent = self.core.silent_errors()
-            if current_silent > self._last_silent_errors:
-                delta = current_silent - self._last_silent_errors
-                self.telemetry.increment("cache_silent_errors_total", delta)
-                self._last_silent_errors = current_silent
+                current_silent = self.core.silent_errors()
+                if current_silent > self._last_silent_errors:
+                    delta = current_silent - self._last_silent_errors
+                    self.telemetry.increment("cache_silent_errors_total", delta)
+                    self._last_silent_errors = current_silent
 
     def reset(self) -> None:
         self.node_id = uuid.uuid4().hex[:8]
@@ -184,7 +184,9 @@ async def _wait_for_leader(fut: Any) -> Any:
 
 
 def _generate_key(func: Callable, namespace: str | None, args: tuple, kwargs: dict) -> str:
-    obj = (func.__module__, func.__qualname__, args, sorted(kwargs.items()))
+    # ⚡️ Optimization: Skip sorting if kwargs is empty
+    kw_items = sorted(kwargs.items()) if kwargs else []
+    obj = (func.__module__, func.__qualname__, args, kw_items)
     prefix = f"{namespace}:{func.__name__}" if namespace else func.__name__
     try:
         return hash_key(obj, prefix)
@@ -214,8 +216,20 @@ def cacheable(
         @functools.wraps(fn)
         async def async_wrapper(*args, **kwargs):
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
-            _manager.check_telemetry()
 
+            # ⚡️ Fast-path: Check hit synchronously to avoid event loop overhead
+            if _manager.telemetry.enabled:
+                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+                    val, _, is_hit = core.get_or_entry_sync(key)
+            else:
+                val, _, is_hit = core.get_or_entry_sync(key)
+            if is_hit:
+                if _manager.telemetry.enabled:
+                    _manager.telemetry.increment("cache_hits_total")
+                return val
+
+            # 🐢 Async-path: Only for misses or thundering herd
+            _manager.check_telemetry()
             while True:
                 if _manager.telemetry.enabled:
                     with _manager.telemetry.time_operation("cache_get_duration_seconds"):
