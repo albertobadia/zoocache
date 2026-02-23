@@ -45,9 +45,9 @@ Zoocache is continuously benchmarked to ensure zero performance regressions. We 
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="benchmarks/reports/comparison-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="benchmarks/reports/comparison-light.svg">
-    <img alt="ZooCache Performance" src="benchmarks/reports/comparison-light.svg" width="830">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/benchmarks/comparison-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/benchmarks/comparison-light.svg">
+    <img alt="ZooCache Performance" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/benchmarks/comparison-light.svg" width="830">
   </picture>
 </p>
 
@@ -66,11 +66,11 @@ The benchmark results reflect ZooCache's specific architectural choices:
 Zoocache includes an optional CLI for real-time monitoring and cache management. It can be installed using the `cli` extra:
 
 ```bash
-pip install "zoocache[cli]"
+uv add "zoocache[cli]"
 ```
 
 <p align="center">
-  <img alt="ZooCache CLI" src="docs/assets/cli.gif" width="830">
+  <img alt="ZooCache CLI" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/cli.gif" width="830">
 </p>
 
 ---
@@ -93,15 +93,11 @@ pip install "zoocache[cli]"
 Using `uv` (recommended):
 ```bash
 uv add zoocache
-# Or with CLI support:
-uv add "zoocache[cli]"
 ```
 
 Using `pip`:
 ```bash
 pip install zoocache
-# Or with CLI support:
-pip install "zoocache[cli]"
 ```
 
 ### Simple Usage
