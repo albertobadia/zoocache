@@ -11,8 +11,9 @@ This guide covers everything you need to use Zoocache effectively.
 5. [API Reference](#api-reference)
 6. [Storage Backends](#storage-backends)
 7. [Distributed Mode](#distributed-mode)
-8. [Best Practices](#best-practices)
-9. [Troubleshooting](#troubleshooting)
+8. [Telemetry](#telemetry)
+9. [Best Practices](#best-practices)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -341,6 +342,72 @@ If a Pub/Sub message is lost:
 3. If the entry has newer versions, Node B automatically catches up
 
 This ensures eventual consistency even without reliable messaging.
+
+---
+
+## Telemetry
+
+Zoocache includes a built-in telemetry system to help you monitor hits, misses, latencies, and system health in production.
+
+### Adapters
+
+Zoocache supports multiple telemetry backends via adapters:
+
+- **`LogAdapter`**: Emits structured logs using the standard Python `logging` module.
+- **`PrometheusAdapter`**: Exposes metrics for Prometheus scraping (requires `prometheus-client`).
+- **`OpenTelemetryAdapter`**: Pushes metrics to an OTLP collector (requires `opentelemetry-sdk`).
+- **`RedisTelemetryAdapter`**: Automatically used when `bus_url` is configured to track distributed invalidation stats.
+
+### Configuration
+
+You can configure telemetry by passing a `TelemetryManager` to the `configure()` function:
+
+```python
+from zoocache import configure, TelemetryManager
+from zoocache.telemetry.adapters.prometheus import PrometheusAdapter
+
+# Initialize telemetry with Prometheus
+telemetry = TelemetryManager([
+    PrometheusAdapter(port=9090, prefix="myapp_cache")
+])
+
+configure(
+    storage_url="redis://localhost:6379",
+    bus_url="redis://localhost:6379",
+    telemetry=telemetry
+)
+```
+
+#### Multiple Adapters
+You can send metrics to multiple backends simultaneously:
+
+```python
+from zoocache.telemetry import LogAdapter
+from zoocache.telemetry.adapters.opentelemetry import OpenTelemetryAdapter
+
+telemetry = TelemetryManager([
+    LogAdapter(level="INFO"),
+    OpenTelemetryAdapter(service_name="payment-service")
+])
+
+configure(telemetry=telemetry)
+```
+
+### Metrics Reference
+
+The following metrics are tracked automatically:
+
+| Metric Name | Type | Description | Labels |
+|-------------|------|-------------|--------|
+| `cache_hits_total` | Counter | Total successful cache lookups | - |
+| `cache_misses_total` | Counter | Total cache lookups that resulted in a miss | - |
+| `cache_get_duration_seconds` | Histogram | Time spent retrieving items from storage | - |
+| `cache_set_duration_seconds` | Histogram | Time spent saving items to storage | - |
+| `cache_invalidations_total` | Counter | Total number of tags invalidated | `tag_prefix` |
+| `cache_errors_total` | Counter | Total exceptions caught during operations | `error_type` |
+| `cache_tti_overflows_total` | Counter | Messages dropped because the TTI queue was full | - |
+| `cache_silent_errors_total` | Counter | Internal Rust errors reported to Python | - |
+| `singleflight_timeouts_total`| Counter | Thundering herd protection timeouts | - |
 
 ---
 
