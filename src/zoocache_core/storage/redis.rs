@@ -61,6 +61,11 @@ impl RedisStorage {
     fn lru_key(&self) -> String {
         format!("{}:_lru", self.prefix)
     }
+
+    async fn clear_conn(&self) {
+        let mut conn_guard = self.connection.write().await;
+        *conn_guard = None;
+    }
 }
 
 #[async_trait]
@@ -81,6 +86,10 @@ impl Storage for RedisStorage {
             .arg(self.lru_update_interval)
             .invoke_async(&mut conn)
             .await;
+
+        if res.is_err() {
+            self.clear_conn().await;
+        }
 
         let (data, pttl) = match res {
             Ok(r) => r,
@@ -124,7 +133,11 @@ impl Storage for RedisStorage {
                 None => pipe.set(&full_key, data),
             };
             pipe.zadd(self.lru_key(), &key, now_secs() as f64);
-            let _: () = pipe.query_async(&mut conn).await.map_err(to_conn_err)?;
+            let res: Result<(), redis::RedisError> = pipe.query_async(&mut conn).await;
+            if res.is_err() {
+                self.clear_conn().await;
+            }
+            res.map_err(to_conn_err)?;
         }
         Ok(())
     }
@@ -139,7 +152,11 @@ impl Storage for RedisStorage {
             None => pipe.set(&full_key, data),
         };
         pipe.zadd(self.lru_key(), &key, now_secs() as f64);
-        let _: () = pipe.query_async(&mut conn).await.map_err(to_conn_err)?;
+        let res: Result<(), redis::RedisError> = pipe.query_async(&mut conn).await;
+        if res.is_err() {
+            self.clear_conn().await;
+        }
+        res.map_err(to_conn_err)?;
         Ok(())
     }
 
@@ -154,18 +171,25 @@ impl Storage for RedisStorage {
             }
             pipe.zadd(self.lru_key(), &key, now);
         }
-        let _: () = pipe.query_async(&mut conn).await.map_err(to_conn_err)?;
+        let res: Result<(), redis::RedisError> = pipe.query_async(&mut conn).await;
+        if res.is_err() {
+            self.clear_conn().await;
+        }
+        res.map_err(to_conn_err)?;
         Ok(())
     }
 
     async fn remove(&self, key: &str) -> PyResult<()> {
         let mut conn = self.get_conn().await.map_err(to_conn_err)?;
-        let _: () = redis::pipe()
+        let res: Result<(), redis::RedisError> = redis::pipe()
             .del(self.full_key(key))
             .zrem(self.lru_key(), key)
             .query_async(&mut conn)
-            .await
-            .map_err(to_conn_err)?;
+            .await;
+        if res.is_err() {
+            self.clear_conn().await;
+        }
+        res.map_err(to_conn_err)?;
         Ok(())
     }
 
@@ -208,6 +232,9 @@ impl Storage for RedisStorage {
         };
         let count: redis::RedisResult<usize> =
             redis::AsyncCommands::zcard(&mut conn, self.lru_key()).await;
+        if count.is_err() {
+            self.clear_conn().await;
+        }
         count.unwrap_or(0)
     }
 

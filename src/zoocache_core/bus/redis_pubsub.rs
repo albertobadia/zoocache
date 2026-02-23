@@ -54,6 +54,11 @@ impl RedisPubSubBus {
         Ok(conn)
     }
 
+    async fn clear_conn(&self) {
+        let mut conn_guard = self.connection.write().await;
+        *conn_guard = None;
+    }
+
     pub fn start_listener<F, I>(&self, invalidate_cb: F, inspect_cb: I)
     where
         F: Fn(&str, u64) + Send + Sync + 'static,
@@ -145,7 +150,10 @@ impl InvalidateBus for RedisPubSubBus {
     async fn publish(&self, tag: &str, version: u64) {
         if let Ok(mut conn) = self.get_conn().await {
             let payload = format!("{}|{}", tag, version);
-            let _: Result<(), _> = conn.publish(&self.channel, payload).await;
+            let res: Result<(), redis::RedisError> = conn.publish(&self.channel, payload).await;
+            if res.is_err() {
+                self.clear_conn().await;
+            }
         }
     }
 
@@ -154,10 +162,13 @@ impl InvalidateBus for RedisPubSubBus {
         let mut conn = self.get_conn().await.map_err(to_conn_err)?;
         let key = format!("{}:node:{}", self.prefix, node_id);
 
-        let _: () = conn
+        let res: Result<(), redis::RedisError> = conn
             .set_ex(key, payload.to_string(), ttl)
-            .await
-            .map_err(to_conn_err)?;
+            .await;
+        if res.is_err() {
+            self.clear_conn().await;
+        }
+        res.map_err(to_conn_err)?;
 
         Ok(())
     }
