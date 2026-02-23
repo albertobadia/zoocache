@@ -61,6 +61,18 @@ The benchmark results reflect ZooCache's specific architectural choices:
 
 > **Note**: Benchmark scale: 5,000 operations. Redis is running on **localhost** (loopback) to eliminate network latency interference and focus on internal engine overhead. ZooCache maintains O(1) tagging overhead and scales linearly. Latency values represent the end-to-end operation time including storage overhead.
 
+### Optional CLI & TUI
+
+Zoocache includes an optional CLI for real-time monitoring and cache management. It can be installed using the `cli` extra:
+
+```bash
+pip install "zoocache[cli]"
+```
+
+<p align="center">
+  <img alt="ZooCache CLI" src="docs/assets/cli.gif" width="830">
+</p>
+
 ---
 
 ## ⚖️ Comparison
@@ -81,11 +93,15 @@ The benchmark results reflect ZooCache's specific architectural choices:
 Using `uv` (recommended):
 ```bash
 uv add zoocache
+# Or with CLI support:
+uv add "zoocache[cli]"
 ```
 
 Using `pip`:
 ```bash
 pip install zoocache
+# Or with CLI support:
+pip install "zoocache[cli]"
 ```
 
 ### Simple Usage
