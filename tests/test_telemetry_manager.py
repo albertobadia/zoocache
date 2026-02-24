@@ -20,6 +20,9 @@ class MockAdapter(TelemetryAdapter):
     def close(self) -> None:
         pass
 
+    def bind_core(self, core):
+        pass
+
 
 def test_telemetry_manager_disabled():
     manager = TelemetryManager()

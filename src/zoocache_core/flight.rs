@@ -61,14 +61,14 @@ pub(crate) fn complete_flight(
 pub(crate) async fn wait_for_flight(flight: &Arc<Flight>, timeout_secs: u64) -> FlightStatus {
     let timeout = std::time::Duration::from_secs(timeout_secs);
 
+    let wait_fut = flight.notify.notified();
+
     {
         let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.0 != FlightStatus::Pending {
             return state.0;
         }
     }
-
-    let wait_fut = flight.notify.notified();
 
     match tokio::time::timeout(timeout, wait_fut).await {
         Ok(_) => {

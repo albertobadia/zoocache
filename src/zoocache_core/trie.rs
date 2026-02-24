@@ -373,7 +373,7 @@ mod tests {
     fn test_catch_up() {
         let trie = PrefixTrie::new();
         let parts = vec!["org", "acme", "user", "42"];
-        let snapshot_versions = vec![0, 0, 100, 0, 500]; // Root=0, org=0, acme=100, user=0, 42=500
+        let snapshot_versions = vec![0, 0, 100, 0, 500];
 
         trie.catch_up(&parts, &snapshot_versions);
 
@@ -425,7 +425,6 @@ mod tests {
         let trie = PrefixTrie::new();
         let tag = "test:fast_forward";
 
-        // Initial state
         let _v1 = trie.invalidate(tag);
 
         // Simulate receiving a message from a node far in the future
@@ -437,7 +436,6 @@ mod tests {
         // Invalidate locally
         let v_new = trie.invalidate(tag);
 
-        // MUST increment strictly from the highest seen version
         assert!(v_new > far_future);
     }
 }

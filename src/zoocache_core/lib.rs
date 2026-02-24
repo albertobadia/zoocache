@@ -244,25 +244,32 @@ impl Core {
                     loop {
                         let now = Instant::now();
 
-                        let msg = match rx.try_recv() {
-                            Ok(m) => Some(m),
-                            Err(mpsc::TryRecvError::Empty) => {
-                                tokio::time::sleep(Duration::from_millis(10)).await;
-                                None
-                            }
-                            Err(mpsc::TryRecvError::Disconnected) => break,
+                        let mut messages = Vec::new();
+
+                        match rx.recv_timeout(Duration::from_secs(1)) {
+                            Ok(m) => messages.push(m),
+                            Err(mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         };
 
-                        if let Some(msg) = msg {
+                        if !messages.is_empty() {
+                            while let Ok(msg) = rx.try_recv() {
+                                messages.push(msg);
+                                if messages.len() >= 1000 {
+                                    break;
+                                }
+                            }
+                        }
+
+                        for msg in messages {
                             match msg {
                                 WorkerMsg::Touch(key, ttl) => {
-                                    if !key.is_empty() {
-                                        if last_touches.get(&key).is_some_and(|&last| {
+                                    if !key.is_empty()
+                                        && !last_touches.get(&key).is_some_and(|&last| {
                                             now.duration_since(last)
                                                 < Duration::from_secs(lru_update_interval)
-                                        }) {
-                                            continue;
-                                        }
+                                        })
+                                    {
                                         batch.insert(key.clone(), ttl);
                                         last_touches.put(key, now);
                                     }
@@ -369,14 +376,14 @@ impl Core {
         }
     }
 
-    fn get_sync<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
+    fn do_get_sync<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
         let status = self.storage.try_get_sync(py, key);
         let status = match status {
             Some(s) => s,
             None => return Ok(None),
         };
 
-        let (entry, _expires_at) = match status {
+        let (entry, expires_at) = match status {
             storage::StorageResult::Hit(e, exp) => (e, exp),
             storage::StorageResult::Expired => {
                 if let Some(state) = &self.tti_state {
@@ -404,7 +411,29 @@ impl Core {
             return Ok(None);
         }
 
+        if entry.trie_version < current_global_version {
+            if let Some(state) = &self.tti_state {
+                let updated_entry = Arc::new(storage::CacheEntry {
+                    value: entry.value.clone_ref(py),
+                    dependencies: entry.dependencies.clone(),
+                    trie_version: current_global_version,
+                });
+                if let Ok(data) = updated_entry.serialize(py) {
+                    let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
+                    let _ = state
+                        .tx
+                        .try_send(WorkerMsg::Update(key.to_string(), data, ttl));
+                }
+            }
+        } else {
+            self.tti_touch(key, self.default_ttl);
+        }
+
         Ok(Some(entry.value.clone_ref(py)))
+    }
+
+    fn get_sync<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
+        self.do_get_sync(py, key)
     }
 
     fn get_or_entry_sync<'py>(
@@ -412,41 +441,10 @@ impl Core {
         py: Python<'py>,
         key: &str,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        let status = self.storage.try_get_sync(py, key);
-        let status = match status {
-            Some(s) => s,
-            None => return Ok((None, false, false)),
-        };
-
-        let (entry, _expires_at) = match status {
-            storage::StorageResult::Hit(e, exp) => (e, exp),
-            storage::StorageResult::Expired => {
-                if let Some(state) = &self.tti_state {
-                    let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
-                }
-                return Ok((None, false, false));
-            }
-            storage::StorageResult::NotFound => return Ok((None, false, false)),
-        };
-
-        let current_global_version = self.trie.get_global_version();
-        if entry.trie_version == current_global_version {
-            if self.storage.needs_tti_worker() && self.storage.check_and_update_touch_gate() {
-                self.tti_touch(key, self.default_ttl);
-            }
-            return Ok((Some(entry.value.clone_ref(py)), false, true));
+        match self.do_get_sync(py, key)? {
+            Some(val) => Ok((Some(val), false, true)),
+            None => Ok((None, false, false)),
         }
-
-        let valid = validate_dependencies(&self.trie, &entry.dependencies);
-        if !valid {
-            let _ = self.storage.try_remove_sync(key);
-            if let Some(state) = &self.tti_state {
-                let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
-            }
-            return Ok((None, false, false));
-        }
-
-        Ok((Some(entry.value.clone_ref(py)), false, true))
     }
 
     fn get_or_entry<'py>(
@@ -542,10 +540,8 @@ impl Core {
         let tti_state = self.tti_state.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            // First check if it's already in flight
             let (flight, is_leader) = try_enter_flight(&flights, &key);
             if !is_leader {
-                // Wait for existing flight
                 let status = wait_for_flight(&flight, flight_timeout).await;
                 return match status {
                     FlightStatus::Done => {

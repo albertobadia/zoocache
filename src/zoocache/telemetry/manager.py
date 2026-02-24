@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from zoocache.telemetry.base import TimerContext
 
@@ -43,3 +43,9 @@ class TelemetryManager:
             return
         for adapter in self._adapters:
             adapter.close()
+
+    def bind_core(self, core: Any) -> None:
+        if not self._enabled:
+            return
+        for adapter in self._adapters:
+            adapter.bind_core(core)

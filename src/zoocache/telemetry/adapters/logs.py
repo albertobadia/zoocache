@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Any
 
 from zoocache.telemetry.base import TelemetryAdapter
 
@@ -28,6 +29,9 @@ class LogAdapter(TelemetryAdapter):
         self._log("gauge", name, value, labels)
 
     def close(self) -> None:
+        pass
+
+    def bind_core(self, core: Any) -> None:
         pass
 
     def _log(self, type_: str, name: str, value: float, labels: dict[str, str] | None) -> None:

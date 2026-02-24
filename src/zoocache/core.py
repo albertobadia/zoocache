@@ -49,7 +49,6 @@ class CacheManager:
 
     def check_telemetry(self) -> None:
         now = time.monotonic()
-        # Fast exit if not enough time passed
         if now - self._last_telemetry_check < 5.0:
             return
 
@@ -119,11 +118,9 @@ def configure(
         telemetry=telemetry,
     )
 
-    if telemetry and hasattr(telemetry, "_adapters"):
+    if telemetry:
         core_instance = _manager.get_core()
-        for adapter in telemetry._adapters:
-            if type(adapter).__name__ == "RedisTelemetryAdapter":
-                adapter.core = core_instance
+        telemetry.bind_core(core_instance)
 
 
 def prune(max_age_secs: int = 3600) -> None:
@@ -184,7 +181,6 @@ async def _wait_for_leader(fut: Any) -> Any:
 
 
 def _generate_key(func: Callable, namespace: str | None, args: tuple, kwargs: dict) -> str:
-    # ⚡️ Optimization: Skip sorting if kwargs is empty
     kw_items = sorted(kwargs.items()) if kwargs else []
     obj = (func.__module__, func.__qualname__, args, kw_items)
     prefix = f"{namespace}:{func.__name__}" if namespace else func.__name__
@@ -217,7 +213,6 @@ def cacheable(
         async def async_wrapper(*args, **kwargs):
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
 
-            # ⚡️ Fast-path: Check hit synchronously to avoid event loop overhead
             if _manager.telemetry.enabled:
                 with _manager.telemetry.time_operation("cache_get_duration_seconds"):
                     val, _, is_hit = core.get_or_entry_sync(key)
@@ -228,8 +223,6 @@ def cacheable(
                     _manager.telemetry.increment("cache_hits_total")
                 return val
 
-            # 🐢 Async-path: Only for misses or thundering herd
-            _manager.check_telemetry()
             while True:
                 if _manager.telemetry.enabled:
                     with _manager.telemetry.time_operation("cache_get_duration_seconds"):
@@ -250,6 +243,7 @@ def cacheable(
                 await asyncio.sleep(0.01)
 
             success = False
+            res = None
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)

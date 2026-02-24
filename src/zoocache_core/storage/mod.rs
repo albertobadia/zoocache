@@ -84,7 +84,7 @@ impl CacheEntry {
 }
 
 pub(crate) enum StorageResult {
-    Hit(Arc<CacheEntry>, Option<u64>), // Entry, expires_at (absolute timestamp)
+    Hit(Arc<CacheEntry>, Option<u64>),
     Expired,
     NotFound,
 }

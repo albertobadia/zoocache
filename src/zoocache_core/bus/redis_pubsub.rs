@@ -162,9 +162,7 @@ impl InvalidateBus for RedisPubSubBus {
         let mut conn = self.get_conn().await.map_err(to_conn_err)?;
         let key = format!("{}:node:{}", self.prefix, node_id);
 
-        let res: Result<(), redis::RedisError> = conn
-            .set_ex(key, payload.to_string(), ttl)
-            .await;
+        let res: Result<(), redis::RedisError> = conn.set_ex(key, payload.to_string(), ttl).await;
         if res.is_err() {
             self.clear_conn().await;
         }

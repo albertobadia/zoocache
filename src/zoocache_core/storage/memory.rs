@@ -35,6 +35,8 @@ impl SyncStorage for InMemoryStorage {
         let (val, expires_at, last_accessed) = entry.value_mut();
 
         if expires_at.is_some_and(|expires| now_secs() > expires) {
+            drop(entry);
+            self.map.remove(key);
             return super::StorageResult::Expired;
         }
 

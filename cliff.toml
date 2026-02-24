@@ -34,7 +34,7 @@ conventional_commits = false
 # filter out the commits that are not conventional
 filter_unconventional = false
 # process each line of a commit as an individual commit
-split_commits = false
+split_commits = true
 # regex for parsing and grouping commits
 commit_parsers = [
     { message = "^ADD: ", group = "✨ Features" },
