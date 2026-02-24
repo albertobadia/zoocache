@@ -664,15 +664,14 @@ impl Core {
                     let data_res = if let Some(raw) = raw_data {
                         storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
                     } else {
-                        let ok_data = Python::attach(|inner_py| {
+                        Python::attach(|inner_py| {
                             let updated_entry = Arc::new(storage::CacheEntry {
                                 value: entry.value.clone_ref(inner_py),
                                 dependencies: entry.dependencies.clone(),
                                 trie_version: current_global_version,
                             });
                             updated_entry.serialize(inner_py)
-                        });
-                        ok_data
+                        })
                     };
 
                     if let Ok(data) = data_res {
