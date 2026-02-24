@@ -402,7 +402,7 @@ impl Core {
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
-        let valid = validate_dependencies(&self.trie, &entry.dependencies);
+        let valid = validate_dependencies(&self.trie, &entry.dependencies, utils::now_secs());
         if !valid {
             let _ = self.storage.try_remove_sync(key);
             if let Some(state) = &self.tti_state {
@@ -513,7 +513,8 @@ impl Core {
                     valid_hit = true;
                     value = Some(Python::attach(|inner_py| entry.value.clone_ref(inner_py)));
                 } else {
-                    let valid = validate_dependencies(&trie, &entry.dependencies);
+                    let valid =
+                        validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
                     if valid {
                         valid_hit = true;
                         value = Some(Python::attach(|inner_py| entry.value.clone_ref(inner_py)));
@@ -588,7 +589,7 @@ impl Core {
                 valid_hit = true;
                 value = Some(Python::attach(|py| entry.value.clone_ref(py)));
             } else {
-                let valid = validate_dependencies(&trie, &entry.dependencies);
+                let valid = validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
                 if valid {
                     valid_hit = true;
                     value = Some(Python::attach(|py| entry.value.clone_ref(py)));
@@ -654,7 +655,7 @@ impl Core {
                     })));
                 }
 
-                let valid = validate_dependencies(&trie, &entry.dependencies);
+                let valid = validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
                 if !valid {
                     let _ = storage.remove(&key).await;
                     return Ok(None);
@@ -719,7 +720,7 @@ impl Core {
                 return Ok(Python::attach(|py| entry.value.clone_ref(py)));
             }
 
-            let valid = validate_dependencies(&trie, &entry.dependencies);
+            let valid = validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
             if !valid {
                 let _ = storage.remove(&key).await;
                 return Ok(Python::attach(|py| py.None()));
@@ -766,7 +767,7 @@ impl Core {
             validate_tag(tag)?;
         }
         let trie_version = self.trie.get_global_version();
-        let snapshots = build_dependency_snapshots(&self.trie, dependencies);
+        let snapshots = build_dependency_snapshots(&self.trie, dependencies, utils::now_secs());
         let entry = Arc::new(CacheEntry {
             value,
             dependencies: snapshots,
@@ -822,7 +823,7 @@ impl Core {
             validate_tag(tag)?;
         }
         let trie_version = self.trie.get_global_version();
-        let snapshots = build_dependency_snapshots(&self.trie, dependencies);
+        let snapshots = build_dependency_snapshots(&self.trie, dependencies, utils::now_secs());
         let entry = Arc::new(CacheEntry {
             value,
             dependencies: snapshots,

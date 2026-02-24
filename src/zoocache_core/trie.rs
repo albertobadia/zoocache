@@ -13,8 +13,8 @@ pub(crate) struct TrieNode {
 }
 
 impl TrieNode {
-    fn touch(&self) {
-        self.last_accessed.store(now_secs(), Ordering::Relaxed);
+    fn touch(&self, now: u64) {
+        self.last_accessed.store(now, Ordering::Relaxed);
     }
 }
 
@@ -35,30 +35,32 @@ impl PrefixTrie {
     #[inline]
     pub fn invalidate(&self, tag: &str) -> u64 {
         self.global_version.fetch_add(1, Ordering::SeqCst);
-        let current = self.traverse_and_touch(tag);
+        let now_s = now_secs();
+        let current = self.traverse_and_touch(tag, now_s);
 
-        let now = now_nanos();
+        let now_n = now_nanos();
         let prev = current
             .version
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-                Some(v.max(now).max(v + 1))
+                Some(v.max(now_n).max(v + 1))
             })
             .unwrap();
 
-        prev.max(now).max(prev + 1)
+        prev.max(now_n).max(prev + 1)
     }
 
     #[inline]
     pub fn set_min_version(&self, tag: &str, version: u64) {
         self.global_version.fetch_add(1, Ordering::SeqCst);
-        let current = self.traverse_and_touch(tag);
+        let now_s = now_secs();
+        let current = self.traverse_and_touch(tag, now_s);
         current.version.fetch_max(version, Ordering::SeqCst);
     }
 
-    pub fn get_path_versions<S: AsRef<str>>(&self, parts: &[S]) -> Vec<u64> {
+    pub fn get_path_versions<S: AsRef<str>>(&self, parts: &[S], now: u64) -> Vec<u64> {
         let mut versions = Vec::with_capacity(parts.len() + 1);
         let mut current = Arc::clone(&self.root);
-        current.touch();
+        current.touch(now);
         versions.push(current.version.load(Ordering::SeqCst));
 
         for part in parts {
@@ -67,7 +69,7 @@ impl PrefixTrie {
                 None => break,
             };
             current = next;
-            current.touch();
+            current.touch(now);
             versions.push(current.version.load(Ordering::SeqCst));
         }
 
@@ -78,9 +80,14 @@ impl PrefixTrie {
     }
 
     #[inline]
-    pub fn is_valid_path<S: AsRef<str>>(&self, parts: &[S], snapshot_versions: &[u64]) -> bool {
+    pub fn is_valid_path<S: AsRef<str>>(
+        &self,
+        parts: &[S],
+        snapshot_versions: &[u64],
+        now: u64,
+    ) -> bool {
         let mut current = Arc::clone(&self.root);
-        current.touch();
+        current.touch(now);
 
         if current.version.load(Ordering::SeqCst) > snapshot_versions[0] {
             return false;
@@ -92,7 +99,7 @@ impl PrefixTrie {
                 None => return true,
             };
             current = next;
-            current.touch();
+            current.touch(now);
             if current.version.load(Ordering::SeqCst) > snapshot_versions[i + 1] {
                 return false;
             }
@@ -100,9 +107,9 @@ impl PrefixTrie {
         true
     }
 
-    pub fn catch_up<S: AsRef<str>>(&self, parts: &[S], snapshot_versions: &[u64]) {
+    pub fn catch_up<S: AsRef<str>>(&self, parts: &[S], snapshot_versions: &[u64], now: u64) {
         let mut current = Arc::clone(&self.root);
-        current.touch();
+        current.touch(now);
 
         current
             .version
@@ -111,7 +118,7 @@ impl PrefixTrie {
         for (i, part) in parts.iter().enumerate() {
             let next = self.get_or_create_child(&current, part.as_ref());
             current = next;
-            current.touch();
+            current.touch(now);
             current
                 .version
                 .fetch_max(snapshot_versions[i + 1], Ordering::SeqCst);
@@ -120,7 +127,7 @@ impl PrefixTrie {
 
     pub fn get_tag_version(&self, tag: &str) -> u64 {
         let parts: Vec<&str> = tag.split(':').collect();
-        let versions = self.get_path_versions(&parts);
+        let versions = self.get_path_versions(&parts, now_secs());
         *versions.last().unwrap_or(&0)
     }
 
@@ -133,7 +140,7 @@ impl PrefixTrie {
         self.root.children.clear();
         self.root.version.store(0, Ordering::SeqCst);
         self.global_version.fetch_add(1, Ordering::SeqCst);
-        self.root.touch();
+        self.root.touch(now_secs());
     }
 
     pub fn prune(&self, max_age_secs: u64) {
@@ -170,13 +177,13 @@ impl PrefixTrie {
         node.children.is_empty() && age > max_age_secs
     }
 
-    fn traverse_and_touch(&self, tag: &str) -> Arc<TrieNode> {
+    fn traverse_and_touch(&self, tag: &str, now: u64) -> Arc<TrieNode> {
         let mut current = Arc::clone(&self.root);
-        current.touch();
+        current.touch(now);
         for part in tag.split(':') {
             let next = self.get_or_create_child(&current, part);
             current = next;
-            current.touch();
+            current.touch(now);
         }
         current
     }
@@ -204,11 +211,12 @@ pub(crate) struct DepSnapshot {
 pub(crate) fn validate_dependencies(
     trie: &PrefixTrie,
     deps: &HashMap<String, DepSnapshot>,
+    now: u64,
 ) -> bool {
     for snapshot in deps.values() {
-        trie.catch_up(&snapshot.parts, &snapshot.path_versions);
+        trie.catch_up(&snapshot.parts, &snapshot.path_versions, now);
 
-        if !trie.is_valid_path(&snapshot.parts, &snapshot.path_versions) {
+        if !trie.is_valid_path(&snapshot.parts, &snapshot.path_versions, now) {
             return false;
         }
     }
@@ -219,11 +227,12 @@ pub(crate) fn validate_dependencies(
 pub(crate) fn build_dependency_snapshots(
     trie: &PrefixTrie,
     dependencies: Vec<String>,
+    now: u64,
 ) -> HashMap<String, DepSnapshot> {
     let mut snapshots = HashMap::with_capacity(dependencies.len());
     for tag in dependencies {
         let parts: Vec<String> = tag.split(':').map(|s| s.to_string()).collect();
-        let path_versions = trie.get_path_versions(&parts);
+        let path_versions = trie.get_path_versions(&parts, now);
         snapshots.insert(
             tag,
             DepSnapshot {
@@ -243,14 +252,15 @@ mod tests {
     fn test_trie_basic() {
         let trie = PrefixTrie::new();
         let parts = vec!["user".to_string(), "1".to_string()];
-        assert_eq!(trie.get_path_versions(&parts), vec![0, 0, 0]);
+        let now = now_secs();
+        assert_eq!(trie.get_path_versions(&parts, now), vec![0, 0, 0]);
 
         trie.invalidate("user:1");
-        let v1 = trie.get_path_versions(&parts);
+        let v1 = trie.get_path_versions(&parts, now);
         assert!(v1[2] > 0);
 
         trie.invalidate("user:1");
-        let v2 = trie.get_path_versions(&parts);
+        let v2 = trie.get_path_versions(&parts, now);
         assert!(v2[2] > v1[2]);
     }
 
@@ -264,16 +274,17 @@ mod tests {
             "1".to_string(),
         ];
 
-        let v0 = trie.get_path_versions(&tag_parts);
-        assert!(trie.is_valid_path(&tag_parts, &v0));
+        let now = now_secs();
+        let v0 = trie.get_path_versions(&tag_parts, now);
+        assert!(trie.is_valid_path(&tag_parts, &v0, now));
 
         trie.invalidate("org:1:user:1");
-        let v1 = trie.get_path_versions(&tag_parts);
-        assert!(!trie.is_valid_path(&tag_parts, &v0));
-        assert!(trie.is_valid_path(&tag_parts, &v1));
+        let v1 = trie.get_path_versions(&tag_parts, now);
+        assert!(!trie.is_valid_path(&tag_parts, &v0, now));
+        assert!(trie.is_valid_path(&tag_parts, &v1, now));
 
         trie.invalidate("org:1");
-        assert!(!trie.is_valid_path(&tag_parts, &v1));
+        assert!(!trie.is_valid_path(&tag_parts, &v1, now));
     }
 
     #[test]
@@ -282,15 +293,16 @@ mod tests {
         let deep_tag = "a:b:c:d:e:f:g:h:i:j";
         let parts: Vec<String> = deep_tag.split(':').map(|s| s.to_string()).collect();
 
-        let path_v0 = trie.get_path_versions(&parts);
+        let now = now_secs();
+        let path_v0 = trie.get_path_versions(&parts, now);
         trie.invalidate(deep_tag);
-        let path_v1 = trie.get_path_versions(&parts);
+        let path_v1 = trie.get_path_versions(&parts, now);
 
-        assert!(!trie.is_valid_path(&parts, &path_v0));
-        assert!(trie.is_valid_path(&parts, &path_v1));
+        assert!(!trie.is_valid_path(&parts, &path_v0, now));
+        assert!(trie.is_valid_path(&parts, &path_v1, now));
 
         trie.invalidate("a:b:c");
-        assert!(!trie.is_valid_path(&parts, &path_v1));
+        assert!(!trie.is_valid_path(&parts, &path_v1, now));
     }
 
     #[test]
@@ -300,11 +312,12 @@ mod tests {
         trie.invalidate("user:2");
 
         let parts = vec!["user".to_string(), "1".to_string()];
-        let v1 = trie.get_path_versions(&parts);
+        let now = now_secs();
+        let v1 = trie.get_path_versions(&parts, now);
         assert!(v1[2] > 0);
 
         trie.clear();
-        let v2 = trie.get_path_versions(&parts);
+        let v2 = trie.get_path_versions(&parts, now);
         assert_eq!(v2, vec![0, 0, 0]);
     }
 
@@ -312,30 +325,33 @@ mod tests {
     fn test_validate_dependencies_empty() {
         let trie = PrefixTrie::new();
         let deps = HashMap::new();
-        assert!(validate_dependencies(&trie, &deps));
+        assert!(validate_dependencies(&trie, &deps, now_secs()));
     }
 
     #[test]
     fn test_validate_dependencies_valid() {
         let trie = PrefixTrie::new();
-        let deps = build_dependency_snapshots(&trie, vec!["user:1".to_string()]);
-        assert!(validate_dependencies(&trie, &deps));
+        let now = now_secs();
+        let deps = build_dependency_snapshots(&trie, vec!["user:1".to_string()], now);
+        assert!(validate_dependencies(&trie, &deps, now));
     }
 
     #[test]
     fn test_validate_dependencies_invalidated() {
         let trie = PrefixTrie::new();
-        let deps = build_dependency_snapshots(&trie, vec!["user:1".to_string()]);
+        let now = now_secs();
+        let deps = build_dependency_snapshots(&trie, vec!["user:1".to_string()], now);
         trie.invalidate("user:1");
-        assert!(!validate_dependencies(&trie, &deps));
+        assert!(!validate_dependencies(&trie, &deps, now));
     }
 
     #[test]
     fn test_validate_dependencies_parent_invalidated() {
         let trie = PrefixTrie::new();
-        let deps = build_dependency_snapshots(&trie, vec!["org:1:user:5".to_string()]);
+        let now = now_secs();
+        let deps = build_dependency_snapshots(&trie, vec!["org:1:user:5".to_string()], now);
         trie.invalidate("org:1");
-        assert!(!validate_dependencies(&trie, &deps));
+        assert!(!validate_dependencies(&trie, &deps, now));
     }
 
     #[test]
@@ -343,8 +359,12 @@ mod tests {
         let trie = PrefixTrie::new();
         trie.invalidate("user:1");
 
-        let snapshots =
-            build_dependency_snapshots(&trie, vec!["user:1".to_string(), "user:2".to_string()]);
+        let now = now_secs();
+        let snapshots = build_dependency_snapshots(
+            &trie,
+            vec!["user:1".to_string(), "user:2".to_string()],
+            now,
+        );
 
         assert_eq!(snapshots.len(), 2);
         assert_eq!(snapshots["user:1"].parts, vec!["user", "1"]);
@@ -356,17 +376,18 @@ mod tests {
     fn test_cold_start_simulation() {
         let trie_old = PrefixTrie::new();
         trie_old.invalidate("user:1");
-        let v_old = trie_old.get_path_versions(&["user", "1"])[2];
+        let now = now_secs();
+        let v_old = trie_old.get_path_versions(&["user", "1"], now)[2];
 
         let trie_new = PrefixTrie::new();
         let snapshot_v = vec![0, 0, v_old];
-        assert!(trie_new.is_valid_path(&["user", "1"], &snapshot_v));
+        assert!(trie_new.is_valid_path(&["user", "1"], &snapshot_v, now));
 
         trie_new.invalidate("user:1");
-        let v_new = trie_new.get_path_versions(&["user", "1"])[2];
+        let v_new = trie_new.get_path_versions(&["user", "1"], now)[2];
 
         assert!(v_new >= v_old); // Should be same or greater depending on clock
-        assert!(!trie_new.is_valid_path(&["user", "1"], &snapshot_v));
+        assert!(!trie_new.is_valid_path(&["user", "1"], &snapshot_v, now));
     }
 
     #[test]
@@ -375,9 +396,10 @@ mod tests {
         let parts = vec!["org", "acme", "user", "42"];
         let snapshot_versions = vec![0, 0, 100, 0, 500];
 
-        trie.catch_up(&parts, &snapshot_versions);
+        let now = now_secs();
+        trie.catch_up(&parts, &snapshot_versions, now);
 
-        let current_versions = trie.get_path_versions(&parts);
+        let current_versions = trie.get_path_versions(&parts, now);
         assert_eq!(current_versions[2], 100); // acme caught up
         assert_eq!(current_versions[4], 500); // 42 caught up
         assert_eq!(current_versions[0], 0); // root stayed 0
