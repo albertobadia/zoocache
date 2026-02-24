@@ -96,19 +96,14 @@ impl Storage for RedisStorage {
             Err(_) => return StorageResult::NotFound,
         };
 
-        if data.is_empty() {
-            return StorageResult::NotFound;
-        }
+        let expires_at = if pttl > 0 {
+            Some(now_secs() + (pttl as u64 / 1000))
+        } else {
+            None
+        };
 
         match Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new)) {
-            Some(entry) => {
-                let expires_at = if pttl > 0 {
-                    Some(now_secs() + (pttl as u64 / 1000))
-                } else {
-                    None
-                };
-                StorageResult::Hit(entry, expires_at)
-            }
+            Some(entry) => StorageResult::Hit(entry, expires_at, Some(data)),
             None => {
                 let _: () = redis::pipe()
                     .del(self.full_key(key))

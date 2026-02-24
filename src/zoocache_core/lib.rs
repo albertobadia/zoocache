@@ -383,8 +383,8 @@ impl Core {
             None => return Ok(None),
         };
 
-        let (entry, expires_at) = match status {
-            storage::StorageResult::Hit(e, exp) => (e, exp),
+        let (entry, expires_at, raw_data) = match status {
+            storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
             storage::StorageResult::Expired => {
                 if let Some(state) = &self.tti_state {
                     let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
@@ -413,12 +413,18 @@ impl Core {
 
         if entry.trie_version < current_global_version {
             if let Some(state) = &self.tti_state {
-                let updated_entry = Arc::new(storage::CacheEntry {
-                    value: entry.value.clone_ref(py),
-                    dependencies: entry.dependencies.clone(),
-                    trie_version: current_global_version,
-                });
-                if let Ok(data) = updated_entry.serialize(py) {
+                let data_res = if let Some(raw) = raw_data {
+                    storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
+                } else {
+                    let updated_entry = Arc::new(storage::CacheEntry {
+                        value: entry.value.clone_ref(py),
+                        dependencies: entry.dependencies.clone(),
+                        trie_version: current_global_version,
+                    });
+                    updated_entry.serialize(py)
+                };
+
+                if let Ok(data) = data_res {
                     let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
                     let _ = state
                         .tx
@@ -486,8 +492,8 @@ impl Core {
                 }
 
                 let status = storage.get(&key).await;
-                let (entry, _expires_at) = match status {
-                    storage::StorageResult::Hit(e, exp) => (e, exp),
+                let (entry, _expires_at, _raw_data) = match status {
+                    storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     storage::StorageResult::Expired => {
                         if let Some(state) = &tti_state {
                             let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
@@ -559,8 +565,8 @@ impl Core {
 
             // We are the leader, check storage
             let status = storage.get(&key).await;
-            let (entry, _expires_at) = match status {
-                storage::StorageResult::Hit(e, exp) => (e, exp),
+            let (entry, _expires_at, _raw_data) = match status {
+                storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                 storage::StorageResult::Expired => {
                     if let Some(state) = &tti_state {
                         let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
@@ -627,8 +633,8 @@ impl Core {
             RUNTIME.block_on(async move {
                 let status = storage.get(&key).await;
 
-                let (entry, expires_at) = match status {
-                    storage::StorageResult::Hit(e, exp) => (e, exp),
+                let (entry, expires_at, raw_data) = match status {
+                    storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     storage::StorageResult::Expired => {
                         if let Some(state) = &tti_state {
                             let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
@@ -655,14 +661,21 @@ impl Core {
                 }
 
                 if entry.trie_version < current_global_version {
-                    let value_clone = Python::attach(|inner_py| entry.value.clone_ref(inner_py));
-                    let deps_clone = entry.dependencies.clone();
-                    let updated_entry = Arc::new(storage::CacheEntry {
-                        value: value_clone,
-                        dependencies: deps_clone,
-                        trie_version: current_global_version,
-                    });
-                    if let Ok(data) = Python::attach(|inner_py| updated_entry.serialize(inner_py)) {
+                    let data_res = if let Some(raw) = raw_data {
+                        storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
+                    } else {
+                        let ok_data = Python::attach(|inner_py| {
+                            let updated_entry = Arc::new(storage::CacheEntry {
+                                value: entry.value.clone_ref(inner_py),
+                                dependencies: entry.dependencies.clone(),
+                                trie_version: current_global_version,
+                            });
+                            updated_entry.serialize(inner_py)
+                        });
+                        ok_data
+                    };
+
+                    if let Ok(data) = data_res {
                         let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
                         if let Some(state) = &tti_state {
                             let _ = state.tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));
@@ -688,8 +701,8 @@ impl Core {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let status = storage.get(&key).await;
 
-            let (entry, expires_at) = match status {
-                storage::StorageResult::Hit(e, exp) => (e, exp),
+            let (entry, expires_at, raw_data) = match status {
+                storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                 storage::StorageResult::Expired => {
                     if let Some(state) = &tti_state {
                         let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
@@ -714,14 +727,20 @@ impl Core {
             }
 
             if entry.trie_version < current_global_version {
-                let value_clone = Python::attach(|py| entry.value.clone_ref(py));
-                let deps_clone = entry.dependencies.clone();
-                let updated_entry = Arc::new(storage::CacheEntry {
-                    value: value_clone,
-                    dependencies: deps_clone,
-                    trie_version: current_global_version,
-                });
-                if let Ok(data) = Python::attach(|py| updated_entry.serialize(py)) {
+                let data_res = if let Some(raw) = raw_data {
+                    storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
+                } else {
+                    Python::attach(|py| {
+                        let updated_entry = Arc::new(storage::CacheEntry {
+                            value: entry.value.clone_ref(py),
+                            dependencies: entry.dependencies.clone(),
+                            trie_version: current_global_version,
+                        });
+                        updated_entry.serialize(py)
+                    })
+                };
+
+                if let Ok(data) = data_res {
                     let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
                     if let Some(state) = &tti_state {
                         let _ = state.tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));

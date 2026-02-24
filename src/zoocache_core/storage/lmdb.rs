@@ -51,7 +51,7 @@ impl SyncStorage for LmdbStorage {
         CacheEntry::deserialize(py, data)
             .ok()
             .map(Arc::new)
-            .map(|e| StorageResult::Hit(e, expires_at))
+            .map(|e| StorageResult::Hit(e, expires_at, Some(data.to_vec())))
             .unwrap_or(StorageResult::NotFound)
     }
 

@@ -41,7 +41,7 @@ impl SyncStorage for InMemoryStorage {
         }
 
         *last_accessed = now_secs();
-        super::StorageResult::Hit(Arc::clone(val), *expires_at)
+        super::StorageResult::Hit(Arc::clone(val), *expires_at, None)
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {

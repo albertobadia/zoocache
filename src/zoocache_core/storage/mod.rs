@@ -81,10 +81,32 @@ impl CacheEntry {
             trie_version: entry.trie_version,
         })
     }
+
+    pub fn update_trie_version_raw(data: &[u8], new_version: u64) -> PyResult<Vec<u8>> {
+        if data.len() < MAGIC_HEADER.len() || &data[..MAGIC_HEADER.len()] != MAGIC_HEADER {
+            return Err(to_runtime_err("Invalid format"));
+        }
+
+        let payload = &data[MAGIC_HEADER.len()..];
+        let decompressed = decompress_size_prepended(payload).map_err(to_runtime_err)?;
+        let mut entry: SerializableCacheEntry =
+            rmp_serde::from_slice(&decompressed).map_err(to_runtime_err)?;
+
+        entry.trie_version = new_version;
+
+        let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
+        let compressed = compress_prepend_size(&packed);
+
+        let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
+        final_data.extend_from_slice(MAGIC_HEADER);
+        final_data.extend_from_slice(&compressed);
+
+        Ok(final_data)
+    }
 }
 
 pub(crate) enum StorageResult {
-    Hit(Arc<CacheEntry>, Option<u64>),
+    Hit(Arc<CacheEntry>, Option<u64>, Option<Vec<u8>>),
     Expired,
     NotFound,
 }
