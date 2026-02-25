@@ -3,8 +3,8 @@ use crate::storage::CacheEntry;
 use crate::trie::build_dependency_snapshots;
 use crate::worker::WorkerMsg;
 use crate::{RUNTIME, utils};
+use foldhash::HashMap;
 use pyo3::prelude::*;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 impl Core {

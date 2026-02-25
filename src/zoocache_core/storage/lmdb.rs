@@ -360,6 +360,23 @@ impl LmdbStorage {
     }
 
     fn put_internal(&self, key: &str, data: &[u8], ttl: Option<u64>) -> PyResult<()> {
+        let max_retries = 2;
+        for attempt in 0..=max_retries {
+            match self.try_put_once(key, data, ttl) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if e.to_string().contains("LMDB storage is full") && attempt < max_retries {
+                        let _ = SyncStorage::evict_lru(self, 1000);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn try_put_once(&self, key: &str, data: &[u8], ttl: Option<u64>) -> PyResult<()> {
         let env = &self.env;
         let count_atom = &self.count;
         let dbs = (

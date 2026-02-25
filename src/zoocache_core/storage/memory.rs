@@ -2,6 +2,7 @@ use crate::storage::SyncStorage;
 use crate::utils::now_secs;
 use dashmap::DashMap;
 use pyo3::prelude::*;
+use rand::seq::IteratorRandom;
 use std::sync::Arc;
 
 use super::{CacheEntry, Storage};
@@ -77,20 +78,34 @@ impl SyncStorage for InMemoryStorage {
     }
 
     fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
-        let mut entries: Vec<(String, u64)> = self
-            .map
-            .iter()
-            .map(|e| (e.key().clone(), e.value().2))
-            .collect();
-
-        if entries.is_empty() || count == 0 {
+        if self.map.is_empty() || count == 0 {
             return Ok(Vec::new());
         }
 
-        let count = count.min(entries.len());
-        entries.select_nth_unstable_by_key(count - 1, |(_, ts)| *ts);
+        // Redis-style random sampling: sample 5x the needed count to find the oldest
+        let sample_size = count.saturating_mul(5).min(self.map.len());
 
-        let to_evict: Vec<String> = entries.drain(..count).map(|(k, _)| k).collect();
+        // Extract random samples
+        let mut rng = rand::rng();
+        let mut samples: Vec<(String, u64)> = self
+            .map
+            .iter()
+            .sample(&mut rng, sample_size)
+            .into_iter()
+            .map(|e| (e.key().clone(), e.value().2))
+            .collect();
+
+        // Sort only the small sample to find the absolute oldest among them
+        let evict_count = count.min(samples.len());
+        samples.select_nth_unstable_by_key(evict_count - 1, |(_, ts)| *ts);
+
+        // Evict the oldest 'count' items from the sample
+        let to_evict: Vec<String> = samples
+            .into_iter()
+            .take(evict_count)
+            .map(|(k, _)| k)
+            .collect();
+
         for key in &to_evict {
             self.map.remove(key);
         }

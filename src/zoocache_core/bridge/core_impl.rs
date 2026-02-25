@@ -3,8 +3,8 @@ use crate::core::Core;
 use crate::storage::{InMemoryStorage, LmdbStorage, RedisStorage};
 use crate::trie::PrefixTrie;
 use crate::utils;
+use crate::utils::FastDashMap as DashMap;
 use crate::worker::{TtiState, spawn_worker};
-use dashmap::DashMap;
 use pyo3::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -100,7 +100,7 @@ impl Core {
         };
 
         let mut tti_state = None;
-        let flights = Arc::new(DashMap::new());
+        let flights = Arc::new(DashMap::default());
         let flight_timeout_val = flight_timeout.unwrap_or(60);
         let silent_errors = Arc::new(AtomicU64::new(0));
 

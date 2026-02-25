@@ -32,6 +32,8 @@ sysinfo = "0.38.2"
 serde_json = "1.0.149"
 smallvec = { version = "1.15.1", features = ["serde"] }
 crossbeam-channel = "0.5.15"
+rand = "0.10.0"
+foldhash = "0.2.0"
 
 [profile.release]
 codegen-units = 1

@@ -1,4 +1,4 @@
-use dashmap::DashMap;
+use crate::utils::FastDashMap as DashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::sync::{Arc, Mutex};

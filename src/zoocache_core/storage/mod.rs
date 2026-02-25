@@ -6,12 +6,17 @@ pub(crate) use self::lmdb::LmdbStorage;
 pub(crate) use self::redis::RedisStorage;
 pub(crate) use memory::InMemoryStorage;
 
+use foldhash::HashMap;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use pyo3::prelude::*;
 use pythonize::pythonize;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::cell::RefCell;
 use std::sync::Arc;
+
+thread_local! {
+    static SERIALIZE_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(16 * 1024));
+}
 
 use crate::trie::DepSnapshot;
 use crate::utils::to_runtime_err;
@@ -34,27 +39,31 @@ const MAGIC_HEADER: &[u8] = b"ZOO1";
 
 impl CacheEntry {
     pub fn serialize(&self, py: Python) -> PyResult<Vec<u8>> {
-        let mut value_buf = Vec::new();
-        let mut serializer = rmp_serde::Serializer::new(&mut value_buf);
-        let mut depythonizer = pythonize::Depythonizer::from_object(self.value.bind(py));
+        SERIALIZE_BUF.with(|buf| {
+            let mut value_buf = buf.borrow_mut();
+            value_buf.clear();
 
-        serde_transcode::transcode(&mut depythonizer, &mut serializer)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
+            let mut serializer = rmp_serde::Serializer::new(&mut *value_buf);
+            let mut depythonizer = pythonize::Depythonizer::from_object(self.value.bind(py));
 
-        let entry = SerializableCacheEntry {
-            value: value_buf,
-            dependencies: self.dependencies.as_ref().clone(),
-            trie_version: self.trie_version,
-        };
+            serde_transcode::transcode(&mut depythonizer, &mut serializer)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
-        let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
-        let compressed = compress_prepend_size(&packed);
+            let entry = SerializableCacheEntry {
+                value: value_buf.clone(),
+                dependencies: self.dependencies.as_ref().clone(),
+                trie_version: self.trie_version,
+            };
 
-        let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
-        final_data.extend_from_slice(MAGIC_HEADER);
-        final_data.extend_from_slice(&compressed);
+            let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
+            let compressed = compress_prepend_size(&packed);
 
-        Ok(final_data)
+            let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
+            final_data.extend_from_slice(MAGIC_HEADER);
+            final_data.extend_from_slice(&compressed);
+
+            Ok(final_data)
+        })
     }
 
     pub fn deserialize(py: Python, data: &[u8]) -> PyResult<Self> {

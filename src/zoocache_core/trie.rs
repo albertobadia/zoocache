@@ -1,8 +1,7 @@
-use crate::utils::{now_nanos, now_secs};
-use dashmap::DashMap;
+use crate::utils::{FastDashMap as DashMap, now_nanos, now_secs};
+use foldhash::HashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -224,7 +223,7 @@ pub(crate) fn build_dependency_snapshots(
     dependencies: Vec<String>,
     now: u64,
 ) -> Arc<HashMap<String, DepSnapshot>> {
-    let mut snapshots = HashMap::with_capacity(dependencies.len());
+    let mut snapshots = HashMap::with_capacity_and_hasher(dependencies.len(), Default::default());
     for tag in dependencies {
         let parts: SmallVec<[String; 8]> = tag.split(':').map(|s| s.to_string()).collect();
         let path_versions = trie.get_path_versions(&parts, now);
@@ -322,7 +321,7 @@ mod tests {
     #[test]
     fn test_validate_dependencies_empty() {
         let trie = PrefixTrie::new();
-        let deps = HashMap::new();
+        let deps = HashMap::default();
         assert!(validate_dependencies(&trie, &deps, now_secs()));
     }
 

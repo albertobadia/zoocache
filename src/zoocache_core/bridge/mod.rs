@@ -1,7 +1,7 @@
 use crate::core::Core;
 use crate::{InvalidTag, StorageIsFull};
+use foldhash::HashMap;
 use pyo3::prelude::*;
-use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 mod core_impl;
