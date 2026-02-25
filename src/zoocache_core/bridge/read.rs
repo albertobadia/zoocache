@@ -90,9 +90,9 @@ impl Core {
     pub(crate) fn bridge_get_or_entry<'py>(
         &self,
         py: Python<'py>,
-        key: String,
+        key: &str,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        if let Ok(res @ (Some(_), false, true)) = self.bridge_get_or_entry_sync(py, &key) {
+        if let Ok(res @ (Some(_), false, true)) = self.bridge_get_or_entry_sync(py, key) {
             return Ok(res);
         }
 
@@ -102,10 +102,11 @@ impl Core {
         let flight_timeout = self.flight_timeout;
         let default_ttl = self.default_ttl;
         let tti_state = self.tti_state.clone();
+        let key_owned = key.to_string(); // Clone key here for the async task
 
         py.detach(|| {
             RUNTIME.block_on(async move {
-                let (flight, is_leader) = try_enter_flight(&flights, &key);
+                let (flight, is_leader) = try_enter_flight(&flights, &key_owned);
                 if !is_leader {
                     let status = wait_for_flight(&flight, flight_timeout).await;
                     return match status {
@@ -125,12 +126,12 @@ impl Core {
                     };
                 }
 
-                let status = storage.get(&key).await;
+                let status = storage.get(&key_owned).await;
                 let (entry, expires_at, raw_data) = match status {
                     crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     crate::storage::StorageResult::Expired => {
                         if let Some(state) = &tti_state {
-                            let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
+                            let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
                         }
                         return Ok((None, true, false));
                     }
@@ -143,17 +144,17 @@ impl Core {
                 let now = utils::now_secs();
                 if entry.trie_version == current_global_version {
                     if let Some(state) = &tti_state {
-                        state.touch(&key, default_ttl);
+                        state.touch(&key_owned, default_ttl);
                     }
                     let res_val = Python::attach(|py| entry.value.clone_ref(py));
                     let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                    complete_flight(&flights, &key, false, Some(res_val_clone));
+                    complete_flight(&flights, &key_owned, false, Some(res_val_clone));
                     return Ok((Some(res_val), false, true));
                 }
 
                 let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
                 if !valid {
-                    let _ = storage.remove(&key).await;
+                    let _ = storage.remove(&key_owned).await;
                     return Ok((None, true, false));
                 }
 
@@ -165,7 +166,7 @@ impl Core {
                                 current_global_version,
                             ) {
                                 let _ = state.tx.try_send(WorkerMsg::Update(
-                                    key.clone(),
+                                    key_owned.clone(),
                                     data,
                                     expires_at.map(|e| e.saturating_sub(now)),
                                 ));
@@ -177,19 +178,19 @@ impl Core {
                                 trie_version: current_global_version,
                             });
                             let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
-                                key.clone(),
+                                key_owned.clone(),
                                 updated_entry,
                                 expires_at.map(|e| e.saturating_sub(now)),
                             ));
                         }
                     }
                 } else if let Some(state) = &tti_state {
-                    state.touch(&key, default_ttl);
+                    state.touch(&key_owned, default_ttl);
                 }
 
                 let res_val = Python::attach(|py| entry.value.clone_ref(py));
                 let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                complete_flight(&flights, &key, false, Some(res_val_clone));
+                complete_flight(&flights, &key_owned, false, Some(res_val_clone));
                 Ok((Some(res_val), false, true))
             })
         })
@@ -198,7 +199,7 @@ impl Core {
     pub(crate) fn bridge_get_or_entry_async<'py>(
         &self,
         py: Python<'py>,
-        key: String,
+        key: &str,
     ) -> PyResult<Bound<'py, PyAny>> {
         let storage = Arc::clone(&self.storage);
         let flights = self.flights.clone();
@@ -206,9 +207,10 @@ impl Core {
         let flight_timeout = self.flight_timeout;
         let default_ttl = self.default_ttl;
         let tti_state = self.tti_state.clone();
+        let key_owned = key.to_string(); // Clone key for async boundary
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (flight, is_leader) = try_enter_flight(&flights, &key);
+            let (flight, is_leader) = try_enter_flight(&flights, &key_owned);
             if !is_leader {
                 let status = wait_for_flight(&flight, flight_timeout).await;
                 return match status {
@@ -227,12 +229,12 @@ impl Core {
                 };
             }
 
-            let status = storage.get(&key).await;
+            let status = storage.get(&key_owned).await;
             let (entry, expires_at, raw_data) = match status {
                 crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                 crate::storage::StorageResult::Expired => {
                     if let Some(state) = &tti_state {
-                        let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
+                        let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
                     }
                     return Ok((None, true, false));
                 }
@@ -245,17 +247,17 @@ impl Core {
             let now = utils::now_secs();
             if entry.trie_version == current_global_version {
                 if let Some(state) = &tti_state {
-                    state.touch(&key, default_ttl);
+                    state.touch(&key_owned, default_ttl);
                 }
                 let res_val = Python::attach(|py| entry.value.clone_ref(py));
                 let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                complete_flight(&flights, &key, false, Some(res_val_clone));
+                complete_flight(&flights, &key_owned, false, Some(res_val_clone));
                 return Ok((Some(res_val), false, true));
             }
 
             let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
             if !valid {
-                let _ = storage.remove(&key).await;
+                let _ = storage.remove(&key_owned).await;
                 return Ok((None, true, false));
             }
 
@@ -267,7 +269,7 @@ impl Core {
                             current_global_version,
                         ) {
                             let _ = state.tx.try_send(WorkerMsg::Update(
-                                key.clone(),
+                                key_owned.clone(),
                                 data,
                                 expires_at.map(|e| e.saturating_sub(now)),
                             ));
@@ -279,19 +281,19 @@ impl Core {
                             trie_version: current_global_version,
                         });
                         let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
-                            key.clone(),
+                            key_owned.clone(),
                             updated_entry,
                             expires_at.map(|e| e.saturating_sub(now)),
                         ));
                     }
                 }
             } else if let Some(state) = &tti_state {
-                state.touch(&key, default_ttl);
+                state.touch(&key_owned, default_ttl);
             }
 
             let res_val = Python::attach(|py| entry.value.clone_ref(py));
             let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-            complete_flight(&flights, &key, false, Some(res_val_clone));
+            complete_flight(&flights, &key_owned, false, Some(res_val_clone));
             Ok((Some(res_val), false, true))
         })
     }
@@ -299,9 +301,9 @@ impl Core {
     pub(crate) fn bridge_get<'py>(
         &self,
         py: Python<'py>,
-        key: String,
+        key: &str,
     ) -> PyResult<Option<Py<PyAny>>> {
-        if let Ok(Some(val)) = self.bridge_get_sync(py, &key) {
+        if let Ok(Some(val)) = self.bridge_get_sync(py, key) {
             return Ok(Some(val));
         }
 
@@ -309,15 +311,16 @@ impl Core {
         let trie = self.trie.clone();
         let default_ttl = self.default_ttl;
         let tti_state = self.tti_state.clone();
+        let key_owned = key.to_string();
 
         py.detach(|| {
             RUNTIME.block_on(async move {
-                let status = storage.get(&key).await;
+                let status = storage.get(&key_owned).await;
                 let (entry, expires_at, raw_data) = match status {
                     crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     crate::storage::StorageResult::Expired => {
                         if let Some(state) = &tti_state {
-                            let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
+                            let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
                         }
                         return Ok(None);
                     }
@@ -328,14 +331,14 @@ impl Core {
                 let now = utils::now_secs();
                 if entry.trie_version == current_global_version {
                     if let Some(state) = &tti_state {
-                        state.touch(&key, default_ttl);
+                        state.touch(&key_owned, default_ttl);
                     }
                     return Ok(Some(Python::attach(|py| entry.value.clone_ref(py))));
                 }
 
                 let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
                 if !valid {
-                    let _ = storage.remove(&key).await;
+                    let _ = storage.remove(&key_owned).await;
                     return Ok(None);
                 }
 
@@ -347,7 +350,7 @@ impl Core {
                                 current_global_version,
                             ) {
                                 let _ = state.tx.try_send(WorkerMsg::Update(
-                                    key.clone(),
+                                    key_owned.clone(),
                                     data,
                                     expires_at.map(|e| e.saturating_sub(now)),
                                 ));
@@ -359,14 +362,14 @@ impl Core {
                                 trie_version: current_global_version,
                             });
                             let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
-                                key.clone(),
+                                key_owned.clone(),
                                 updated_entry,
                                 expires_at.map(|e| e.saturating_sub(now)),
                             ));
                         }
                     }
                 } else if let Some(state) = &tti_state {
-                    state.touch(&key, default_ttl);
+                    state.touch(&key_owned, default_ttl);
                 }
 
                 Ok(Some(Python::attach(|py| entry.value.clone_ref(py))))
@@ -377,20 +380,21 @@ impl Core {
     pub(crate) fn bridge_get_async<'py>(
         &self,
         py: Python<'py>,
-        key: String,
+        key: &str,
     ) -> PyResult<Bound<'py, PyAny>> {
         let storage = Arc::clone(&self.storage);
         let trie = self.trie.clone();
         let default_ttl = self.default_ttl;
         let tti_state = self.tti_state.clone();
+        let key_owned = key.to_string();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let status = storage.get(&key).await;
+            let status = storage.get(&key_owned).await;
             let (entry, expires_at, raw_data) = match status {
                 crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                 crate::storage::StorageResult::Expired => {
                     if let Some(state) = &tti_state {
-                        let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
+                        let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
                     }
                     return Ok(None);
                 }
@@ -401,14 +405,14 @@ impl Core {
             let now = utils::now_secs();
             if entry.trie_version == current_global_version {
                 if let Some(state) = &tti_state {
-                    state.touch(&key, default_ttl);
+                    state.touch(&key_owned, default_ttl);
                 }
                 return Ok(Some(Python::attach(|py| entry.value.clone_ref(py))));
             }
 
             let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
             if !valid {
-                let _ = storage.remove(&key).await;
+                let _ = storage.remove(&key_owned).await;
                 return Ok(None);
             }
 
@@ -420,7 +424,7 @@ impl Core {
                             current_global_version,
                         ) {
                             let _ = state.tx.try_send(WorkerMsg::Update(
-                                key.clone(),
+                                key_owned.clone(),
                                 data,
                                 expires_at.map(|e| e.saturating_sub(now)),
                             ));
@@ -432,14 +436,14 @@ impl Core {
                             trie_version: current_global_version,
                         });
                         let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
-                            key.clone(),
+                            key_owned.clone(),
                             updated_entry,
                             expires_at.map(|e| e.saturating_sub(now)),
                         ));
                     }
                 }
             } else if let Some(state) = &tti_state {
-                state.touch(&key, default_ttl);
+                state.touch(&key_owned, default_ttl);
             }
 
             Ok(Some(Python::attach(|py| entry.value.clone_ref(py))))

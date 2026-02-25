@@ -82,22 +82,31 @@ impl SyncStorage for InMemoryStorage {
             return Ok(Vec::new());
         }
 
-        // Redis-style random sampling: sample 5x the needed count to find the oldest
+        // We use a progressive sampling approach rather than pulling 5x items
+        // into a large allocated vector.
         let sample_size = count.saturating_mul(5).min(self.map.len());
 
+        let mut oldest_items: Vec<(String, u64)> = Vec::with_capacity(count);
         let mut rng = rand::rng();
-        let mut sample: Vec<(String, u64)> = self
-            .map
-            .iter()
-            .sample(&mut rng, sample_size)
-            .into_iter()
-            .map(|e| (e.key().clone(), e.value().2))
-            .collect();
 
-        sample.sort_unstable_by_key(|&(_, ts)| ts);
+        // DashMap's iter is reasonably fast, and we just need `sample_size` elements
+        for entry in self.map.iter().sample(&mut rng, sample_size) {
+            let key = entry.key().clone();
+            let ts = entry.value().2;
 
-        let evict_count = count.min(sample.len());
-        let to_evict: Vec<String> = sample.drain(..evict_count).map(|(k, _)| k).collect();
+            if oldest_items.len() < count {
+                oldest_items.push((key, ts));
+                // Keep sorted so the newest (highest ts) is at the end
+                oldest_items.sort_unstable_by_key(|&(_, t)| t);
+            } else if ts < oldest_items.last().unwrap().1 {
+                // Replace the newest element in our sample with this older one
+                oldest_items.pop();
+                oldest_items.push((key, ts));
+                oldest_items.sort_unstable_by_key(|&(_, t)| t);
+            }
+        }
+
+        let to_evict: Vec<String> = oldest_items.into_iter().map(|(k, _)| k).collect();
 
         for key in &to_evict {
             self.map.remove(key);

@@ -61,12 +61,12 @@ impl Core {
     fn get_or_entry<'py>(
         &self,
         py: Python<'py>,
-        key: String,
+        key: &str,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
         self.bridge_get_or_entry(py, key)
     }
 
-    fn get_or_entry_async<'py>(&self, py: Python<'py>, key: String) -> PyResult<Bound<'py, PyAny>> {
+    fn get_or_entry_async<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Bound<'py, PyAny>> {
         self.bridge_get_or_entry_async(py, key)
     }
 
@@ -74,11 +74,11 @@ impl Core {
         self.complete_flight(key, is_error, value);
     }
 
-    fn get<'py>(&self, py: Python<'py>, key: String) -> PyResult<Option<Py<PyAny>>> {
+    fn get<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
         self.bridge_get(py, key)
     }
 
-    fn get_async<'py>(&self, py: Python<'py>, key: String) -> PyResult<Bound<'py, PyAny>> {
+    fn get_async<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Bound<'py, PyAny>> {
         self.bridge_get_async(py, key)
     }
 

@@ -1,7 +1,7 @@
 use crate::InvalidTag;
 use crate::utils;
 use pyo3::prelude::*;
-use sha2::{Digest, Sha256};
+use xxhash_rust::xxh3::xxh3_64;
 
 pub(crate) fn validate_tag(tag: &str) -> PyResult<()> {
     let len = tag.len();
@@ -58,13 +58,11 @@ pub(crate) fn hash_key(
         PyErr::new::<pyo3::exceptions::PyTypeError, _>(utils::to_runtime_err(e).to_string())
     })?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    let digest = hasher.finalize();
-    let hex = format!("{:x}", digest);
+    let hash_value = xxh3_64(&data);
+    let hex = format!("{:016x}", hash_value);
     let result = match prefix {
-        Some(p) => format!("{}:{}", p, &hex[..16]),
-        None => hex[..16].to_string(),
+        Some(p) => format!("{}:{}", p, hex),
+        None => hex,
     };
     Ok(result)
 }
