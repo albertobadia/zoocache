@@ -164,7 +164,14 @@ Explore the deep dives into Zoocache's architecture and features:
 
 ### Architectural Decisions (ADR)
 - [**ADR 0001: Prefix-Trie Invalidation**](docs/adr/0001-prefix-trie-invalidation.md)
+- [**ADR 0002: Rust Core Python Wrapper**](docs/adr/0002-rust-core-python-wrapper.md)
+- [**ADR 0003: HLC Distributed Consistency**](docs/adr/0003-hlc-distributed-consistency.md)
+- [**ADR 0004: Serialization Strategy**](docs/adr/0004-serialization-strategy.md)
+- [**ADR 0005: SingleFlight Pattern**](docs/adr/0005-singleflight-pattern.md)
+- [**ADR 0006: Trie Performance Optimizations**](docs/adr/0006-trie-performance-optimizations.md)
 - [**ADR 0007: Zero-Bridge Serialization**](docs/adr/0007-zero-bridge-serialization.md)
+- [**ADR 0008: Redis Bus Connection Pooling**](docs/adr/0008-redis-bus-connection-pooling.md)
+- [**ADR 0009: Robust Sync and Error Handling**](docs/adr/0009-robust-sync-and-error-handling.md)
 
 ---
 
