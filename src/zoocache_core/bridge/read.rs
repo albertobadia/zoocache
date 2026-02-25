@@ -102,7 +102,7 @@ impl Core {
         let flight_timeout = self.flight_timeout;
         let default_ttl = self.default_ttl;
         let tti_state = self.tti_state.clone();
-        let key_owned = key.to_string(); // Clone key here for the async task
+        let key_owned = key.to_string();
 
         py.detach(|| {
             RUNTIME.block_on(async move {
@@ -204,29 +204,15 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let flights = self.flights.clone();
         let trie = self.trie.clone();
-        let flight_timeout = self.flight_timeout;
+        let _flight_timeout = self.flight_timeout;
         let default_ttl = self.default_ttl;
         let tti_state = self.tti_state.clone();
-        let key_owned = key.to_string(); // Clone key for async boundary
+        let key_owned = key.to_string();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (flight, is_leader) = try_enter_flight(&flights, &key_owned);
+            let (_flight, is_leader) = try_enter_flight(&flights, &key_owned);
             if !is_leader {
-                let status = wait_for_flight(&flight, flight_timeout).await;
-                return match status {
-                    crate::flight::FlightStatus::Done => {
-                        let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-                        let val =
-                            Python::attach(|py| state.1.as_ref().map(|obj| obj.clone_ref(py)));
-                        Ok((val, false, true))
-                    }
-                    crate::flight::FlightStatus::Error => {
-                        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                            "Thundering herd leader failed",
-                        ))
-                    }
-                    crate::flight::FlightStatus::Pending => unreachable!(),
-                };
+                return Ok((None, false, false));
             }
 
             let status = storage.get(&key_owned).await;

@@ -157,18 +157,32 @@ def get_tag_version(tag: str) -> int:
     return _manager.get_core().get_tag_version(tag)
 
 
-def _resolve_flight_signals(key: str) -> None:
+def _resolve_flight_signals(key: str, exc: BaseException | None = None) -> None:
     signals = _manager._flight_signals.pop(key, [])
-    for evt_loop, sig in signals:
-        if not evt_loop.is_closed():
-            evt_loop.call_soon_threadsafe(sig.set)
+    for evt_loop, fut in signals:
+        if not evt_loop.is_closed() and not fut.done():
+            if exc:
+                evt_loop.call_soon_threadsafe(fut.set_exception, exc)
+            else:
+                evt_loop.call_soon_threadsafe(fut.set_result, None)
 
 
-def _register_flight_signal(key: str) -> asyncio.Event:
+def _register_flight_signal(key: str) -> asyncio.Future:
     loop = asyncio.get_running_loop()
-    sig = asyncio.Event()
-    _manager._flight_signals.setdefault(key, []).append((loop, sig))
-    return sig
+    fut = loop.create_future()
+    _manager._flight_signals.setdefault(key, []).append((loop, fut))
+    return fut
+
+
+def _unregister_flight_signal(key: str, fut: asyncio.Future) -> None:
+    signals = _manager._flight_signals.get(key)
+    if signals:
+        try:
+            signals.remove((asyncio.get_running_loop(), fut))
+            if not signals:
+                del _manager._flight_signals[key]
+        except ValueError:
+            pass
 
 
 async def _wait_for_leader(fut: Any) -> Any:
@@ -224,6 +238,8 @@ def cacheable(
                 return val
 
             while True:
+                fut = _register_flight_signal(key)
+
                 if _manager.telemetry.enabled:
                     with _manager.telemetry.time_operation("cache_get_duration_seconds"):
                         val, is_leader, is_hit = await core.get_or_entry_async(key)
@@ -231,19 +247,24 @@ def cacheable(
                     val, is_leader, is_hit = await core.get_or_entry_async(key)
 
                 if is_hit:
+                    _unregister_flight_signal(key, fut)
+                    _resolve_flight_signals(key)
                     if _manager.telemetry.enabled:
                         _manager.telemetry.increment("cache_hits_total")
                     return val
 
                 if _manager.telemetry.enabled:
                     _manager.telemetry.increment("cache_misses_total")
+
                 if is_leader:
+                    _unregister_flight_signal(key, fut)
                     break
 
-                await asyncio.sleep(0.01)
+                await _wait_for_leader(fut)
 
             success = False
             res = None
+            exception = None
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
@@ -254,12 +275,13 @@ def cacheable(
                         await core.set_async(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 success = True
                 return res
-            except BaseException:
+            except BaseException as e:
+                exception = e
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 raise
             finally:
                 core.finish_flight(key, not success, res if success else None)
-                _resolve_flight_signals(key)
+                _resolve_flight_signals(key, exception)
 
         @functools.wraps(fn)
         def sync_wrapper(*args, **kwargs):
