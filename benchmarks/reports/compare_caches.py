@@ -424,8 +424,8 @@ def main():
         w, r, _ = results["ZooCache (Redis)"]
         results["ZooCache (Redis)"] = (w, r, propagation_result)
 
-    generate_svg(results, "ZooCache Performance vs Alternatives", "benchmarks/reports/comparison-dark.svg", "dark")
-    generate_svg(results, "ZooCache Performance vs Alternatives", "benchmarks/reports/comparison-light.svg", "light")
+    generate_svg(results, "ZooCache Performance vs Alternatives", "docs/assets/benchmarks/comparison-dark.svg", "dark")
+    generate_svg(results, "ZooCache Performance vs Alternatives", "docs/assets/benchmarks/comparison-light.svg", "light")
 
     print("\nBenchmark Complete.")
     for k, v in results.items():
