@@ -49,3 +49,6 @@ class PrometheusAdapter(TelemetryAdapter):
 
     def close(self) -> None:
         pass
+
+    def bind_core(self, core: Any) -> None:
+        pass

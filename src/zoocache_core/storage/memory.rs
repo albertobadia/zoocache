@@ -2,6 +2,7 @@ use crate::storage::SyncStorage;
 use crate::utils::now_secs;
 use dashmap::DashMap;
 use pyo3::prelude::*;
+use rand::seq::IteratorRandom;
 use std::sync::Arc;
 
 use super::{CacheEntry, Storage};
@@ -35,11 +36,13 @@ impl SyncStorage for InMemoryStorage {
         let (val, expires_at, last_accessed) = entry.value_mut();
 
         if expires_at.is_some_and(|expires| now_secs() > expires) {
+            drop(entry);
+            self.map.remove(key);
             return super::StorageResult::Expired;
         }
 
         *last_accessed = now_secs();
-        super::StorageResult::Hit(Arc::clone(val), *expires_at)
+        super::StorageResult::Hit(Arc::clone(val), *expires_at, None)
     }
 
     fn set(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
@@ -75,20 +78,31 @@ impl SyncStorage for InMemoryStorage {
     }
 
     fn evict_lru(&self, count: usize) -> PyResult<Vec<String>> {
-        let mut entries: Vec<(String, u64)> = self
-            .map
-            .iter()
-            .map(|e| (e.key().clone(), e.value().2))
-            .collect();
-
-        if entries.is_empty() || count == 0 {
+        if self.map.is_empty() || count == 0 {
             return Ok(Vec::new());
         }
 
-        let count = count.min(entries.len());
-        entries.select_nth_unstable_by_key(count - 1, |(_, ts)| *ts);
+        let sample_size = count.saturating_mul(5).min(self.map.len());
 
-        let to_evict: Vec<String> = entries.drain(..count).map(|(k, _)| k).collect();
+        let mut oldest_items: Vec<(String, u64)> = Vec::with_capacity(count);
+        let mut rng = rand::rng();
+
+        for entry in self.map.iter().sample(&mut rng, sample_size) {
+            let key = entry.key().clone();
+            let ts = entry.value().2;
+
+            if oldest_items.len() < count {
+                oldest_items.push((key, ts));
+                oldest_items.sort_unstable_by_key(|&(_, t)| t);
+            } else if ts < oldest_items.last().unwrap().1 {
+                oldest_items.pop();
+                oldest_items.push((key, ts));
+                oldest_items.sort_unstable_by_key(|&(_, t)| t);
+            }
+        }
+
+        let to_evict: Vec<String> = oldest_items.into_iter().map(|(k, _)| k).collect();
+
         for key in &to_evict {
             self.map.remove(key);
         }

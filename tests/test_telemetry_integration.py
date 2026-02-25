@@ -20,6 +20,9 @@ class MockAdapter(TelemetryAdapter):
     def close(self) -> None:
         pass
 
+    def bind_core(self, core):
+        pass
+
     def shutdown(self):
         pass
 

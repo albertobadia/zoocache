@@ -9,7 +9,7 @@ use lmdb::{
 use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(crate) struct LmdbStorage {
     env: Arc<Environment>,
@@ -19,7 +19,6 @@ pub(crate) struct LmdbStorage {
     db_lru_index: Database,
     db_meta: Database,
     count: Arc<AtomicUsize>,
-    last_touch_secs: AtomicU64,
 }
 
 impl SyncStorage for LmdbStorage {
@@ -51,7 +50,7 @@ impl SyncStorage for LmdbStorage {
         CacheEntry::deserialize(py, data)
             .ok()
             .map(Arc::new)
-            .map(|e| StorageResult::Hit(e, expires_at))
+            .map(|e| StorageResult::Hit(e, expires_at, Some(data.to_vec())))
             .unwrap_or(StorageResult::NotFound)
     }
 
@@ -305,7 +304,6 @@ impl LmdbStorage {
             db_lru_index,
             db_meta,
             count: Arc::new(AtomicUsize::new(count)),
-            last_touch_secs: AtomicU64::new(0),
         })
     }
 
@@ -362,6 +360,24 @@ impl LmdbStorage {
     }
 
     fn put_internal(&self, key: &str, data: &[u8], ttl: Option<u64>) -> PyResult<()> {
+        let max_retries = 2;
+        for attempt in 0..=max_retries {
+            match self.try_put_once(key, data, ttl) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if e.to_string().contains("LMDB storage is full") && attempt < max_retries {
+                        // Aggressively evict old items synchronously
+                        let _ = SyncStorage::evict_lru(self, 1000);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn try_put_once(&self, key: &str, data: &[u8], ttl: Option<u64>) -> PyResult<()> {
         let env = &self.env;
         let count_atom = &self.count;
         let dbs = (
@@ -467,10 +483,7 @@ impl Storage for LmdbStorage {
     }
 
     fn check_and_update_touch_gate(&self) -> bool {
-        // Global 1s gate: safe because the TTI worker deduplicates per key at lru_update_interval.
-        let now = now_secs();
-        let last = self.last_touch_secs.swap(now, Ordering::Relaxed);
-        now > last
+        true
     }
 
     fn try_set_sync(

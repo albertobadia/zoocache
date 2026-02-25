@@ -43,30 +43,54 @@ markdown_extensions:
   - admonition
   - pymdownx.details
   - md_in_html
+  - attr_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
 
 nav:
   - Home: index.md
-  - User Guide: user_guide.md
-  - Django Integration:
-      - Overview: django.md
-      - User Guide: django_user_guide.md
-      - Django Serializers Auto: django_serializers.md
-  - FastAPI Integration: fastapi.md
-  - Litestar Integration: litestar.md
-  - Architecture: architecture.md
-  - Serialization: serialization.md
-  - Reliability: reliability.md
-  - Invalidation: invalidation.md
-  - Consistency: consistency.md
-  - Concurrency: concurrency.md
-  - Architectural Decisions:
-      - "ADR 0001: Prefix-Trie Invalidation": adr/0001-prefix-trie-invalidation.md
-      - "ADR 0002: Rust Core Python Wrapper": adr/0002-rust-core-python-wrapper.md
-      - "ADR 0003: HLC Distributed Consistency": adr/0003-hlc-distributed-consistency.md
-      - "ADR 0004: Serialization Strategy": adr/0004-serialization-strategy.md
-      - "ADR 0005: Singleflight Pattern": adr/0005-singleflight-pattern.md
-      - "ADR 0006: Trie Performance Optimizations": adr/0006-trie-performance-optimizations.md
-      - "ADR 0007: Zero-Bridge Serialization": adr/0007-zero-bridge-serialization.md
-      - "ADR 0008: Redis Bus Connection Pooling": adr/0008-redis-bus-connection-pooling.md
-      - "ADR 0009: Robust Sync & Error Handling": adr/0009-robust-sync-and-error-handling.md
-      - "ADR 0010: Intelligent Serializer Caching": adr/0010-intelligent-serializer-caching.md
+  - 📖 Tutorials:
+      - Quick Start & Installation: setup.md
+  - 🛠️ How-to Guides:
+      - Web Frameworks:
+          - Django:
+              - Overview: django.md
+              - Detailed Guide: django_user_guide.md
+              - Auto Serializers: django_serializers.md
+          - FastAPI: fastapi.md
+          - Litestar: litestar.md
+      - Tools:
+          - CLI / TUI: cli.md
+      - Telemetry:
+          - Overview: telemetry/index.md
+          - Prometheus: telemetry/prometheus.md
+          - OpenTelemetry: telemetry/otel.md
+      - Troubleshooting: troubleshooting.md
+  - 💡 Explanations:
+      - Core Concepts: concepts.md
+      - Configuration:
+          - General: configuration/index.md
+          - Storage Backends: configuration/storage.md
+      - Distributed Mode: distributed.md
+      - Architecture: architecture.md
+      - Semantic Invalidation: invalidation.md
+      - Distributed Consistency: consistency.md
+      - Concurrency (SingleFlight): concurrency.md
+      - Serialization: serialization.md
+      - Reliability & Edge Cases: reliability.md
+      - Architecture Decisions (ADR):
+          - "ADR 0001: Prefix-Trie Invalidation": adr/0001-prefix-trie-invalidation.md
+          - "ADR 0002: Rust Core Python Wrapper": adr/0002-rust-core-python-wrapper.md
+          - "ADR 0003: HLC Distributed Consistency": adr/0003-hlc-distributed-consistency.md
+          - "ADR 0004: Serialization Strategy": adr/0004-serialization-strategy.md
+          - "ADR 0005: Singleflight Pattern": adr/0005-singleflight-pattern.md
+          - "ADR 0006: Trie Performance Optimizations": adr/0006-trie-performance-optimizations.md
+          - "ADR 0007: Zero-Bridge Serialization": adr/0007-zero-bridge-serialization.md
+          - "ADR 0008: Redis Bus Connection Pooling": adr/0008-redis-bus-connection-pooling.md
+          - "ADR 0009: Robust Sync & Error Handling": adr/0009-robust-sync-and-error-handling.md
+  - 📚 Reference:
+      - API Reference: reference/api.md

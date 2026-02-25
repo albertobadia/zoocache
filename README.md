@@ -45,9 +45,9 @@ Zoocache is continuously benchmarked to ensure zero performance regressions. We 
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="benchmarks/reports/comparison-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="benchmarks/reports/comparison-light.svg">
-    <img alt="ZooCache Performance" src="benchmarks/reports/comparison-light.svg" width="830">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/benchmarks/comparison-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/benchmarks/comparison-light.svg">
+    <img alt="ZooCache Performance" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/benchmarks/comparison-light.svg" width="830">
   </picture>
 </p>
 
@@ -66,11 +66,11 @@ The benchmark results reflect ZooCache's specific architectural choices:
 Zoocache includes an optional CLI for real-time monitoring and cache management. It can be installed using the `cli` extra:
 
 ```bash
-pip install "zoocache[cli]"
+uv add "zoocache[cli]"
 ```
 
 <p align="center">
-  <img alt="ZooCache CLI" src="docs/assets/cli.gif" width="830">
+  <img alt="ZooCache CLI" src="https://raw.githubusercontent.com/albertobadia/zoocache/main/docs/assets/cli.gif" width="830">
 </p>
 
 ---
@@ -93,15 +93,11 @@ pip install "zoocache[cli]"
 Using `uv` (recommended):
 ```bash
 uv add zoocache
-# Or with CLI support:
-uv add "zoocache[cli]"
 ```
 
 Using `pip`:
 ```bash
 pip install zoocache
-# Or with CLI support:
-pip install "zoocache[cli]"
 ```
 
 ### Simple Usage
@@ -168,7 +164,14 @@ Explore the deep dives into Zoocache's architecture and features:
 
 ### Architectural Decisions (ADR)
 - [**ADR 0001: Prefix-Trie Invalidation**](docs/adr/0001-prefix-trie-invalidation.md)
+- [**ADR 0002: Rust Core Python Wrapper**](docs/adr/0002-rust-core-python-wrapper.md)
+- [**ADR 0003: HLC Distributed Consistency**](docs/adr/0003-hlc-distributed-consistency.md)
+- [**ADR 0004: Serialization Strategy**](docs/adr/0004-serialization-strategy.md)
+- [**ADR 0005: SingleFlight Pattern**](docs/adr/0005-singleflight-pattern.md)
+- [**ADR 0006: Trie Performance Optimizations**](docs/adr/0006-trie-performance-optimizations.md)
 - [**ADR 0007: Zero-Bridge Serialization**](docs/adr/0007-zero-bridge-serialization.md)
+- [**ADR 0008: Redis Bus Connection Pooling**](docs/adr/0008-redis-bus-connection-pooling.md)
+- [**ADR 0009: Robust Sync and Error Handling**](docs/adr/0009-robust-sync-and-error-handling.md)
 
 ---
 

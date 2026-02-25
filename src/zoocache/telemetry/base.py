@@ -46,3 +46,7 @@ class TelemetryAdapter(ABC):
     @abstractmethod
     def close(self) -> None:
         pass
+
+    @abstractmethod
+    def bind_core(self, core: Any) -> None:
+        pass

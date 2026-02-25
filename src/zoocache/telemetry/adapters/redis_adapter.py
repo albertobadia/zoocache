@@ -10,7 +10,7 @@ logger = logging.getLogger("zoocache.telemetry")
 
 
 class RedisTelemetryAdapter(TelemetryAdapter):
-    def __init__(self, core: Core, flush_interval: float = 1.0):
+    def __init__(self, core: Core | None = None, flush_interval: float = 1.0):
         self.core = core
         self.flush_interval = flush_interval
 
@@ -20,12 +20,18 @@ class RedisTelemetryAdapter(TelemetryAdapter):
         self._flush_thread = threading.Thread(target=self._flush_loop, daemon=True)
         self._flush_thread.start()
 
+    def bind_core(self, core: Core) -> None:
+        self.core = core
+
     def _flush_loop(self) -> None:
         while not self._shutdown_event.is_set():
             time.sleep(self.flush_interval)
             self._flush()
 
     def _flush(self) -> None:
+        if self.core is None:
+            return
+
         with self._lock:
             if not self._counters:
                 return
