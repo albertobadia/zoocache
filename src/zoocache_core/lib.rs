@@ -33,33 +33,36 @@ pyo3::create_exception!(zoocache, InvalidTag, pyo3::exceptions::PyException);
 pyo3::create_exception!(zoocache, StorageIsFull, pyo3::exceptions::PyException);
 
 fn validate_tag(tag: &str) -> PyResult<()> {
-    if tag.is_empty() {
+    let len = tag.len();
+    if len == 0 {
         return Err(InvalidTag::new_err("Tag cannot be empty"));
     }
-    if tag.len() > 256 {
+    if len > 256 {
         return Err(InvalidTag::new_err(format!(
             "Tag length exceeded: {}. Max allowed is 256 characters.",
-            tag.len()
+            len
         )));
     }
-    if tag.starts_with(':') || tag.ends_with(':') || tag.starts_with('.') || tag.ends_with('.') {
+
+    let bytes = tag.as_bytes();
+    if bytes[0] == b':' || bytes[len - 1] == b':' || bytes[0] == b'.' || bytes[len - 1] == b'.' {
         return Err(InvalidTag::new_err(
             "Tag cannot start or end with ':' or '.'",
         ));
     }
 
     let mut depth = 0;
-    for c in tag.chars() {
-        if c == ':' {
+    for &b in bytes {
+        if b == b':' {
             depth += 1;
-        }
-        if !c.is_alphanumeric() && c != '_' && c != ':' && c != '.' {
+        } else if !b.is_ascii_alphanumeric() && b != b'_' && b != b'.' {
             return Err(InvalidTag::new_err(format!(
                 "Invalid character '{}' in tag '{}'. Only alphanumeric, '_', ':' and '.' are allowed.",
-                c, tag
+                b as char, tag
             )));
         }
     }
+
     if depth > 16 {
         return Err(InvalidTag::new_err(format!(
             "Tag depth exceeded: {}. Max allowed depth is 16.",
@@ -74,6 +77,7 @@ enum WorkerMsg {
     Prune(u64),
     Delete(String),
     Update(String, Vec<u8>, Option<u64>),
+    UpdateEntry(String, Arc<CacheEntry>, Option<u64>),
     FlushMetrics(HashMap<String, f64>),
 }
 
@@ -282,6 +286,11 @@ impl Core {
                                         silent_errors_worker.fetch_add(1, Ordering::Relaxed);
                                     }
                                 }
+                                WorkerMsg::UpdateEntry(key, entry, ttl) => {
+                                    if storage_worker.set(key, entry, ttl).await.is_err() {
+                                        silent_errors_worker.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
                                 WorkerMsg::Update(key, data, ttl) => {
                                     if storage_worker.set_raw(key, data, ttl).await.is_err() {
                                         silent_errors_worker.fetch_add(1, Ordering::Relaxed);
@@ -376,22 +385,19 @@ impl Core {
         }
     }
 
-    fn do_get_sync<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
+    fn get_sync<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
         let status = self.storage.try_get_sync(py, key);
-        let status = match status {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-
         let (entry, expires_at, raw_data) = match status {
-            storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
-            storage::StorageResult::Expired => {
+            Some(storage::StorageResult::Hit(e, exp, raw)) => (e, exp, raw),
+            Some(storage::StorageResult::Expired) => {
+                let _ = self.storage.try_remove_sync(key);
                 if let Some(state) = &self.tti_state {
                     let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
                 }
                 return Ok(None);
             }
-            storage::StorageResult::NotFound => return Ok(None),
+            Some(storage::StorageResult::NotFound) => return Ok(None),
+            None => return Ok(None),
         };
 
         let current_global_version = self.trie.get_global_version();
@@ -413,22 +419,27 @@ impl Core {
 
         if entry.trie_version < current_global_version {
             if let Some(state) = &self.tti_state {
-                let data_res = if let Some(raw) = raw_data {
-                    storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
+                if let Some(raw) = raw_data {
+                    if let Ok(data) =
+                        storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
+                    {
+                        let _ = state.tx.try_send(WorkerMsg::Update(
+                            key.to_string(),
+                            data,
+                            expires_at.map(|e| e.saturating_sub(utils::now_secs())),
+                        ));
+                    }
                 } else {
                     let updated_entry = Arc::new(storage::CacheEntry {
                         value: entry.value.clone_ref(py),
-                        dependencies: entry.dependencies.clone(),
+                        dependencies: Arc::clone(&entry.dependencies),
                         trie_version: current_global_version,
                     });
-                    updated_entry.serialize(py)
-                };
-
-                if let Ok(data) = data_res {
-                    let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
-                    let _ = state
-                        .tx
-                        .try_send(WorkerMsg::Update(key.to_string(), data, ttl));
+                    let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                        key.to_string(),
+                        updated_entry,
+                        expires_at.map(|e| e.saturating_sub(utils::now_secs())),
+                    ));
                 }
             }
         } else {
@@ -438,16 +449,12 @@ impl Core {
         Ok(Some(entry.value.clone_ref(py)))
     }
 
-    fn get_sync<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
-        self.do_get_sync(py, key)
-    }
-
     fn get_or_entry_sync<'py>(
         &self,
         py: Python<'py>,
         key: &str,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        match self.do_get_sync(py, key)? {
+        match self.get_sync(py, key)? {
             Some(val) => Ok((Some(val), false, true)),
             None => Ok((None, false, false)),
         }
@@ -458,7 +465,7 @@ impl Core {
         py: Python<'py>,
         key: String,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        if let Ok(res @ (_, _, true)) = self.get_or_entry_sync(py, &key) {
+        if let Ok(res @ (Some(_), false, true)) = self.get_or_entry_sync(py, &key) {
             return Ok(res);
         }
 
@@ -492,7 +499,7 @@ impl Core {
                 }
 
                 let status = storage.get(&key).await;
-                let (entry, _expires_at, _raw_data) = match status {
+                let (entry, expires_at, raw_data) = match status {
                     storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     storage::StorageResult::Expired => {
                         if let Some(state) = &tti_state {
@@ -506,34 +513,57 @@ impl Core {
                 };
 
                 let current_global_version = trie.get_global_version();
-                let mut valid_hit = false;
-                let mut value = None;
-
+                let now = utils::now_secs();
                 if entry.trie_version == current_global_version {
-                    valid_hit = true;
-                    value = Some(Python::attach(|inner_py| entry.value.clone_ref(inner_py)));
-                } else {
-                    let valid =
-                        validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
-                    if valid {
-                        valid_hit = true;
-                        value = Some(Python::attach(|inner_py| entry.value.clone_ref(inner_py)));
-                    } else {
-                        let _ = storage.remove(&key).await;
-                    }
-                }
-
-                if valid_hit {
                     if let Some(state) = &tti_state {
                         state.touch(&key, default_ttl);
                     }
-                    let val_clone =
-                        Python::attach(|inner_py| value.as_ref().map(|v| v.clone_ref(inner_py)));
-                    complete_flight(&flights, &key, false, val_clone);
-                    return Ok((value, false, true));
+                    let res_val = Python::attach(|py| entry.value.clone_ref(py));
+                    let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
+                    complete_flight(&flights, &key, false, Some(res_val_clone));
+                    return Ok((Some(res_val), false, true));
                 }
 
-                Ok((None, true, false))
+                let valid = validate_dependencies(&trie, &entry.dependencies, now);
+                if !valid {
+                    let _ = storage.remove(&key).await;
+                    return Ok((None, true, false));
+                }
+
+                if entry.trie_version < current_global_version {
+                    if let Some(state) = &tti_state {
+                        if let Some(raw) = raw_data {
+                            if let Ok(data) = storage::CacheEntry::update_trie_version_raw(
+                                &raw,
+                                current_global_version,
+                            ) {
+                                let _ = state.tx.try_send(WorkerMsg::Update(
+                                    key.clone(),
+                                    data,
+                                    expires_at.map(|e| e.saturating_sub(now)),
+                                ));
+                            }
+                        } else {
+                            let updated_entry = Arc::new(storage::CacheEntry {
+                                value: Python::attach(|py| entry.value.clone_ref(py)),
+                                dependencies: Arc::clone(&entry.dependencies),
+                                trie_version: current_global_version,
+                            });
+                            let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                                key.clone(),
+                                updated_entry,
+                                expires_at.map(|e| e.saturating_sub(now)),
+                            ));
+                        }
+                    }
+                } else if let Some(state) = &tti_state {
+                    state.touch(&key, default_ttl);
+                }
+
+                let res_val = Python::attach(|py| entry.value.clone_ref(py));
+                let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
+                complete_flight(&flights, &key, false, Some(res_val_clone));
+                Ok((Some(res_val), false, true))
             })
         })
     }
@@ -564,9 +594,8 @@ impl Core {
                 };
             }
 
-            // We are the leader, check storage
             let status = storage.get(&key).await;
-            let (entry, _expires_at, _raw_data) = match status {
+            let (entry, expires_at, raw_data) = match status {
                 storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                 storage::StorageResult::Expired => {
                     if let Some(state) = &tti_state {
@@ -575,44 +604,62 @@ impl Core {
                     return Ok((None, true, false));
                 }
                 storage::StorageResult::NotFound => {
-                    // Stay as leader, but return None to indicate we need population
                     return Ok((None, true, false));
                 }
             };
 
-            // Found in storage, validate
             let current_global_version = trie.get_global_version();
-            let mut valid_hit = false;
-            let mut value = None;
-
+            let now = utils::now_secs();
             if entry.trie_version == current_global_version {
-                valid_hit = true;
-                value = Some(Python::attach(|py| entry.value.clone_ref(py)));
-            } else {
-                let valid = validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
-                if valid {
-                    valid_hit = true;
-                    value = Some(Python::attach(|py| entry.value.clone_ref(py)));
-                } else {
-                    let _ = storage.remove(&key).await;
-                }
-            }
-
-            if valid_hit {
                 if let Some(state) = &tti_state {
                     state.touch(&key, default_ttl);
                 }
-                complete_flight(
-                    &flights,
-                    &key,
-                    false,
-                    value.as_ref().map(|v| Python::attach(|py| v.clone_ref(py))),
-                );
-                return Ok((value, false, true));
+                let res_val = Python::attach(|py| entry.value.clone_ref(py));
+                let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
+                complete_flight(&flights, &key, false, Some(res_val_clone));
+                return Ok((Some(res_val), false, true));
             }
 
-            // Not valid (invalidated), keep flight open for leader to repopulate
-            Ok((None, true, false))
+            let valid = validate_dependencies(&trie, &entry.dependencies, now);
+            if !valid {
+                let _ = storage.remove(&key).await;
+                return Ok((None, true, false));
+            }
+
+            if entry.trie_version < current_global_version {
+                if let Some(state) = &tti_state {
+                    if let Some(raw) = raw_data {
+                        if let Ok(data) = storage::CacheEntry::update_trie_version_raw(
+                            &raw,
+                            current_global_version,
+                        ) {
+                            let _ = state.tx.try_send(WorkerMsg::Update(
+                                key.clone(),
+                                data,
+                                expires_at.map(|e| e.saturating_sub(now)),
+                            ));
+                        }
+                    } else {
+                        let updated_entry = Arc::new(storage::CacheEntry {
+                            value: Python::attach(|py| entry.value.clone_ref(py)),
+                            dependencies: Arc::clone(&entry.dependencies),
+                            trie_version: current_global_version,
+                        });
+                        let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                            key.clone(),
+                            updated_entry,
+                            expires_at.map(|e| e.saturating_sub(now)),
+                        ));
+                    }
+                }
+            } else if let Some(state) = &tti_state {
+                state.touch(&key, default_ttl);
+            }
+
+            let res_val = Python::attach(|py| entry.value.clone_ref(py));
+            let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
+            complete_flight(&flights, &key, false, Some(res_val_clone));
+            Ok((Some(res_val), false, true))
         })
     }
 
@@ -633,7 +680,6 @@ impl Core {
         py.detach(|| {
             RUNTIME.block_on(async move {
                 let status = storage.get(&key).await;
-
                 let (entry, expires_at, raw_data) = match status {
                     storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     storage::StorageResult::Expired => {
@@ -646,111 +692,52 @@ impl Core {
                 };
 
                 let current_global_version = trie.get_global_version();
+                let now = utils::now_secs();
                 if entry.trie_version == current_global_version {
                     if let Some(state) = &tti_state {
                         state.touch(&key, default_ttl);
                     }
-                    return Ok(Some(Python::attach(|inner_py| {
-                        entry.value.clone_ref(inner_py)
-                    })));
+                    return Ok(Some(Python::attach(|py| entry.value.clone_ref(py))));
                 }
 
-                let valid = validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
+                let valid = validate_dependencies(&trie, &entry.dependencies, now);
                 if !valid {
                     let _ = storage.remove(&key).await;
                     return Ok(None);
                 }
 
                 if entry.trie_version < current_global_version {
-                    let data_res = if let Some(raw) = raw_data {
-                        storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
-                    } else {
-                        Python::attach(|inner_py| {
+                    if let Some(state) = &tti_state {
+                        if let Some(raw) = raw_data {
+                            if let Ok(data) = storage::CacheEntry::update_trie_version_raw(
+                                &raw,
+                                current_global_version,
+                            ) {
+                                let _ = state.tx.try_send(WorkerMsg::Update(
+                                    key.clone(),
+                                    data,
+                                    expires_at.map(|e| e.saturating_sub(now)),
+                                ));
+                            }
+                        } else {
                             let updated_entry = Arc::new(storage::CacheEntry {
-                                value: entry.value.clone_ref(inner_py),
-                                dependencies: entry.dependencies.clone(),
+                                value: Python::attach(|py| entry.value.clone_ref(py)),
+                                dependencies: Arc::clone(&entry.dependencies),
                                 trie_version: current_global_version,
                             });
-                            updated_entry.serialize(inner_py)
-                        })
-                    };
-
-                    if let Ok(data) = data_res {
-                        let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
-                        if let Some(state) = &tti_state {
-                            let _ = state.tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));
+                            let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                                key.clone(),
+                                updated_entry,
+                                expires_at.map(|e| e.saturating_sub(now)),
+                            ));
                         }
                     }
                 } else if let Some(state) = &tti_state {
                     state.touch(&key, default_ttl);
                 }
 
-                Ok(Some(Python::attach(|inner_py| {
-                    entry.value.clone_ref(inner_py)
-                })))
+                Ok(Some(Python::attach(|py| entry.value.clone_ref(py))))
             })
-        })
-    }
-
-    fn get_async<'py>(&self, py: Python<'py>, key: String) -> PyResult<Bound<'py, PyAny>> {
-        let storage = Arc::clone(&self.storage);
-        let trie = self.trie.clone();
-        let default_ttl = self.default_ttl;
-        let tti_state = self.tti_state.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let status = storage.get(&key).await;
-
-            let (entry, expires_at, raw_data) = match status {
-                storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
-                storage::StorageResult::Expired => {
-                    if let Some(state) = &tti_state {
-                        let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
-                    }
-                    return Ok(Python::attach(|py| py.None()));
-                }
-                storage::StorageResult::NotFound => return Ok(Python::attach(|py| py.None())),
-            };
-
-            let current_global_version = trie.get_global_version();
-            if entry.trie_version == current_global_version {
-                if let Some(state) = &tti_state {
-                    state.touch(&key, default_ttl);
-                }
-                return Ok(Python::attach(|py| entry.value.clone_ref(py)));
-            }
-
-            let valid = validate_dependencies(&trie, &entry.dependencies, utils::now_secs());
-            if !valid {
-                let _ = storage.remove(&key).await;
-                return Ok(Python::attach(|py| py.None()));
-            }
-
-            if entry.trie_version < current_global_version {
-                let data_res = if let Some(raw) = raw_data {
-                    storage::CacheEntry::update_trie_version_raw(&raw, current_global_version)
-                } else {
-                    Python::attach(|py| {
-                        let updated_entry = Arc::new(storage::CacheEntry {
-                            value: entry.value.clone_ref(py),
-                            dependencies: entry.dependencies.clone(),
-                            trie_version: current_global_version,
-                        });
-                        updated_entry.serialize(py)
-                    })
-                };
-
-                if let Ok(data) = data_res {
-                    let ttl = expires_at.and_then(|exp| exp.checked_sub(utils::now_secs()));
-                    if let Some(state) = &tti_state {
-                        let _ = state.tx.try_send(WorkerMsg::Update(key.clone(), data, ttl));
-                    }
-                }
-            } else if let Some(state) = &tti_state {
-                state.touch(&key, default_ttl);
-            }
-
-            Ok(Python::attach(|py| entry.value.clone_ref(py)))
         })
     }
 
@@ -778,17 +765,15 @@ impl Core {
         let max_entries = self.max_entries;
         let trie = self.trie.clone();
 
-        // Fast path for local storages
         if let Ok(()) = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl) {
             if let Some(max) = max_entries
                 && let Some(current) = storage.try_len_sync()
                 && current > max
             {
                 let to_evict = current - max + (max / 10).max(1);
-                if let Some(Ok(evicted)) = storage.try_evict_lru_sync(to_evict) {
-                    let _ = evicted;
+                if let Some(Ok(_evicted)) = storage.try_evict_lru_sync(to_evict) {
+                    trie.prune(0);
                 }
-                trie.prune(0);
             }
             return Ok(());
         }
@@ -834,7 +819,6 @@ impl Core {
         let max_entries = self.max_entries;
         let trie = self.trie.clone();
 
-        // Fast path: try sync len/evict for local storages
         let sync_evict = max_entries.and_then(|max| {
             storage.try_len_sync().and_then(|current| {
                 if current > max {
@@ -869,8 +853,6 @@ impl Core {
         validate_tag(&tag)?;
         let new_ver = self.trie.invalidate(&tag);
 
-        // For local bus, publish is a no-op - skip async overhead entirely
-        // For remote bus, we need to publish asynchronously
         if self.bus_is_remote {
             let bus = Arc::clone(&self.bus);
             py.detach(|| {

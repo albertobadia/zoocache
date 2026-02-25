@@ -26,7 +26,7 @@ struct SerializableCacheEntry {
 
 pub(crate) struct CacheEntry {
     pub value: Py<PyAny>,
-    pub dependencies: HashMap<String, DepSnapshot>,
+    pub dependencies: Arc<HashMap<String, DepSnapshot>>,
     pub trie_version: u64,
 }
 
@@ -43,7 +43,7 @@ impl CacheEntry {
 
         let entry = SerializableCacheEntry {
             value: value_buf,
-            dependencies: self.dependencies.clone(),
+            dependencies: self.dependencies.as_ref().clone(),
             trie_version: self.trie_version,
         };
 
@@ -77,7 +77,7 @@ impl CacheEntry {
 
         Ok(Self {
             value: py_val.into(),
-            dependencies: entry.dependencies,
+            dependencies: Arc::new(entry.dependencies),
             trie_version: entry.trie_version,
         })
     }

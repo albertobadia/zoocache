@@ -80,34 +80,13 @@ impl PrefixTrie {
     }
 
     #[inline]
-    pub fn is_valid_path<S: AsRef<str>>(
+    pub fn check_and_catch_up<S: AsRef<str>>(
         &self,
         parts: &[S],
         snapshot_versions: &[u64],
         now: u64,
+        create: bool,
     ) -> bool {
-        let mut current = Arc::clone(&self.root);
-        current.touch(now);
-
-        if current.version.load(Ordering::SeqCst) > snapshot_versions[0] {
-            return false;
-        }
-
-        for (i, part) in parts.iter().enumerate() {
-            let next = match current.children.get(part.as_ref()) {
-                Some(n) => Arc::clone(n.value()),
-                None => return true,
-            };
-            current = next;
-            current.touch(now);
-            if current.version.load(Ordering::SeqCst) > snapshot_versions[i + 1] {
-                return false;
-            }
-        }
-        true
-    }
-
-    pub fn catch_up<S: AsRef<str>>(&self, parts: &[S], snapshot_versions: &[u64], now: u64) {
         let mut current = Arc::clone(&self.root);
         current.touch(now);
 
@@ -115,14 +94,29 @@ impl PrefixTrie {
             .version
             .fetch_max(snapshot_versions[0], Ordering::SeqCst);
 
+        let mut is_valid = current.version.load(Ordering::SeqCst) <= snapshot_versions[0];
+
         for (i, part) in parts.iter().enumerate() {
-            let next = self.get_or_create_child(&current, part.as_ref());
-            current = next;
+            let next_node = if !create && is_valid {
+                match current.children.get(part.as_ref()) {
+                    Some(n) => Arc::clone(n.value()),
+                    None => return true,
+                }
+            } else {
+                self.get_or_create_child(&current, part.as_ref())
+            };
+
+            current = next_node;
             current.touch(now);
             current
                 .version
                 .fetch_max(snapshot_versions[i + 1], Ordering::SeqCst);
+
+            if is_valid && current.version.load(Ordering::SeqCst) > snapshot_versions[i + 1] {
+                is_valid = false;
+            }
         }
+        is_valid
     }
 
     pub fn get_tag_version(&self, tag: &str) -> u64 {
@@ -214,9 +208,7 @@ pub(crate) fn validate_dependencies(
     now: u64,
 ) -> bool {
     for snapshot in deps.values() {
-        trie.catch_up(&snapshot.parts, &snapshot.path_versions, now);
-
-        if !trie.is_valid_path(&snapshot.parts, &snapshot.path_versions, now) {
+        if !trie.check_and_catch_up(&snapshot.parts, &snapshot.path_versions, now, true) {
             return false;
         }
     }
@@ -228,7 +220,7 @@ pub(crate) fn build_dependency_snapshots(
     trie: &PrefixTrie,
     dependencies: Vec<String>,
     now: u64,
-) -> HashMap<String, DepSnapshot> {
+) -> Arc<HashMap<String, DepSnapshot>> {
     let mut snapshots = HashMap::with_capacity(dependencies.len());
     for tag in dependencies {
         let parts: Vec<String> = tag.split(':').map(|s| s.to_string()).collect();
@@ -241,7 +233,7 @@ pub(crate) fn build_dependency_snapshots(
             },
         );
     }
-    snapshots
+    Arc::new(snapshots)
 }
 
 #[cfg(test)]
@@ -276,15 +268,15 @@ mod tests {
 
         let now = now_secs();
         let v0 = trie.get_path_versions(&tag_parts, now);
-        assert!(trie.is_valid_path(&tag_parts, &v0, now));
+        assert!(trie.check_and_catch_up(&tag_parts, &v0, now, false));
 
         trie.invalidate("org:1:user:1");
         let v1 = trie.get_path_versions(&tag_parts, now);
-        assert!(!trie.is_valid_path(&tag_parts, &v0, now));
-        assert!(trie.is_valid_path(&tag_parts, &v1, now));
+        assert!(!trie.check_and_catch_up(&tag_parts, &v0, now, false));
+        assert!(trie.check_and_catch_up(&tag_parts, &v1, now, false));
 
         trie.invalidate("org:1");
-        assert!(!trie.is_valid_path(&tag_parts, &v1, now));
+        assert!(!trie.check_and_catch_up(&tag_parts, &v1, now, false));
     }
 
     #[test]
@@ -298,11 +290,11 @@ mod tests {
         trie.invalidate(deep_tag);
         let path_v1 = trie.get_path_versions(&parts, now);
 
-        assert!(!trie.is_valid_path(&parts, &path_v0, now));
-        assert!(trie.is_valid_path(&parts, &path_v1, now));
+        assert!(!trie.check_and_catch_up(&parts, &path_v0, now, false));
+        assert!(trie.check_and_catch_up(&parts, &path_v1, now, false));
 
         trie.invalidate("a:b:c");
-        assert!(!trie.is_valid_path(&parts, &path_v1, now));
+        assert!(!trie.check_and_catch_up(&parts, &path_v1, now, false));
     }
 
     #[test]
@@ -381,13 +373,13 @@ mod tests {
 
         let trie_new = PrefixTrie::new();
         let snapshot_v = vec![0, 0, v_old];
-        assert!(trie_new.is_valid_path(&["user", "1"], &snapshot_v, now));
+        assert!(trie_new.check_and_catch_up(&["user", "1"], &snapshot_v, now, false));
 
         trie_new.invalidate("user:1");
         let v_new = trie_new.get_path_versions(&["user", "1"], now)[2];
 
         assert!(v_new >= v_old); // Should be same or greater depending on clock
-        assert!(!trie_new.is_valid_path(&["user", "1"], &snapshot_v, now));
+        assert!(!trie_new.check_and_catch_up(&["user", "1"], &snapshot_v, now, false));
     }
 
     #[test]
@@ -397,7 +389,7 @@ mod tests {
         let snapshot_versions = vec![0, 0, 100, 0, 500];
 
         let now = now_secs();
-        trie.catch_up(&parts, &snapshot_versions, now);
+        trie.check_and_catch_up(&parts, &snapshot_versions, now, true);
 
         let current_versions = trie.get_path_versions(&parts, now);
         assert_eq!(current_versions[2], 100); // acme caught up
@@ -409,7 +401,6 @@ mod tests {
     fn test_pruning() {
         let trie = PrefixTrie::new();
 
-        // Use user:1
         trie.invalidate("user:1");
         trie.prune(100);
         assert_eq!(trie.root.children.len(), 1);
@@ -427,19 +418,14 @@ mod tests {
         let v1 = trie.invalidate(tag);
         assert!(v1 > 0);
 
-        // Force a future version artificially
-        let future_ver = v1 + 1_000_000_000; // +1 second roughly in nanos
+        let future_ver = v1 + 1_000_000_000;
         trie.set_min_version(tag, future_ver);
 
         let current_ver = trie.get_tag_version(tag);
         assert!(current_ver >= future_ver);
 
-        // Now invalidate again. It should be > future_ver + 1 (Ratchet effect)
         let v2 = trie.invalidate(tag);
         assert!(v2 > future_ver);
-
-        // Even if our local wall clock is behind future_ver, v2 must be ahead.
-        // (This guarantees causal consistency)
     }
 
     #[test]
@@ -449,7 +435,6 @@ mod tests {
 
         let _v1 = trie.invalidate(tag);
 
-        // Simulate receiving a message from a node far in the future
         let far_future = u64::MAX - 1000;
         trie.set_min_version(tag, far_future);
 
