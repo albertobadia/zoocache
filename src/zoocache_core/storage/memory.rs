@@ -85,9 +85,8 @@ impl SyncStorage for InMemoryStorage {
         // Redis-style random sampling: sample 5x the needed count to find the oldest
         let sample_size = count.saturating_mul(5).min(self.map.len());
 
-        // Extract random samples
         let mut rng = rand::rng();
-        let mut samples: Vec<(String, u64)> = self
+        let mut sample: Vec<(String, u64)> = self
             .map
             .iter()
             .sample(&mut rng, sample_size)
@@ -95,16 +94,10 @@ impl SyncStorage for InMemoryStorage {
             .map(|e| (e.key().clone(), e.value().2))
             .collect();
 
-        // Sort only the small sample to find the absolute oldest among them
-        let evict_count = count.min(samples.len());
-        samples.select_nth_unstable_by_key(evict_count - 1, |(_, ts)| *ts);
+        sample.sort_unstable_by_key(|&(_, ts)| ts);
 
-        // Evict the oldest 'count' items from the sample
-        let to_evict: Vec<String> = samples
-            .into_iter()
-            .take(evict_count)
-            .map(|(k, _)| k)
-            .collect();
+        let evict_count = count.min(sample.len());
+        let to_evict: Vec<String> = sample.drain(..evict_count).map(|(k, _)| k).collect();
 
         for key in &to_evict {
             self.map.remove(key);

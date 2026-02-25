@@ -406,9 +406,6 @@ mod tests {
     fn test_pruning() {
         let trie = PrefixTrie::new();
 
-        // This would create nodes with version 0 if we just accessed them
-        // but invalidate sets version > 0.
-        // Let's test with a simple walk-and-touch (which sets version 0)
         trie.traverse_and_touch("user:1", now_secs());
 
         trie.prune(100);
@@ -416,7 +413,7 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_secs(2));
         trie.prune(0);
-        // Now it should be pruned because version is 0
+
         assert_eq!(trie.root.children.len(), 0);
     }
 
@@ -424,16 +421,10 @@ mod tests {
     fn test_prune_preserves_invalidations() {
         let trie = PrefixTrie::new();
 
-        // 1. Invalidate a tag (version > 0)
         trie.invalidate("user:1");
-
-        // 2. Wait a bit
         std::thread::sleep(std::time::Duration::from_secs(1));
-
-        // 3. Prune with age 0 (aggressive)
         trie.prune(0);
 
-        // 4. MUST NOT be pruned because it has an active invalidation (version > 0)
         assert_eq!(
             trie.root.children.len(),
             1,
@@ -472,7 +463,6 @@ mod tests {
 
         assert_eq!(trie.get_tag_version(tag), far_future);
 
-        // Invalidate locally
         let v_new = trie.invalidate(tag);
 
         assert!(v_new > far_future);

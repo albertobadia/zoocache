@@ -373,4 +373,76 @@ impl Core {
             })
         })
     }
+
+    pub(crate) fn bridge_get_async<'py>(
+        &self,
+        py: Python<'py>,
+        key: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let storage = Arc::clone(&self.storage);
+        let trie = self.trie.clone();
+        let default_ttl = self.default_ttl;
+        let tti_state = self.tti_state.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let status = storage.get(&key).await;
+            let (entry, expires_at, raw_data) = match status {
+                crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
+                crate::storage::StorageResult::Expired => {
+                    if let Some(state) = &tti_state {
+                        let _ = state.tx.try_send(WorkerMsg::Delete(key.clone()));
+                    }
+                    return Ok(None);
+                }
+                crate::storage::StorageResult::NotFound => return Ok(None),
+            };
+
+            let current_global_version = trie.get_global_version();
+            let now = utils::now_secs();
+            if entry.trie_version == current_global_version {
+                if let Some(state) = &tti_state {
+                    state.touch(&key, default_ttl);
+                }
+                return Ok(Some(Python::attach(|py| entry.value.clone_ref(py))));
+            }
+
+            let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
+            if !valid {
+                let _ = storage.remove(&key).await;
+                return Ok(None);
+            }
+
+            if entry.trie_version < current_global_version {
+                if let Some(state) = &tti_state {
+                    if let Some(raw) = raw_data {
+                        if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
+                            &raw,
+                            current_global_version,
+                        ) {
+                            let _ = state.tx.try_send(WorkerMsg::Update(
+                                key.clone(),
+                                data,
+                                expires_at.map(|e| e.saturating_sub(now)),
+                            ));
+                        }
+                    } else {
+                        let updated_entry = Arc::new(crate::storage::CacheEntry {
+                            value: Python::attach(|py| entry.value.clone_ref(py)),
+                            dependencies: Arc::clone(&entry.dependencies),
+                            trie_version: current_global_version,
+                        });
+                        let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                            key.clone(),
+                            updated_entry,
+                            expires_at.map(|e| e.saturating_sub(now)),
+                        ));
+                    }
+                }
+            } else if let Some(state) = &tti_state {
+                state.touch(&key, default_ttl);
+            }
+
+            Ok(Some(Python::attach(|py| entry.value.clone_ref(py))))
+        })
+    }
 }

@@ -78,6 +78,10 @@ impl Core {
         self.bridge_get(py, key)
     }
 
+    fn get_async<'py>(&self, py: Python<'py>, key: String) -> PyResult<Bound<'py, PyAny>> {
+        self.bridge_get_async(py, key)
+    }
+
     #[pyo3(signature = (key, value, dependencies, ttl=None))]
     fn set(
         &self,

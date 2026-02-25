@@ -366,6 +366,7 @@ impl LmdbStorage {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     if e.to_string().contains("LMDB storage is full") && attempt < max_retries {
+                        // Aggressively evict old items synchronously
                         let _ = SyncStorage::evict_lru(self, 1000);
                         continue;
                     }
