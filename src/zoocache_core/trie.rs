@@ -167,8 +167,10 @@ impl PrefixTrie {
 
         let last = node.last_accessed.load(Ordering::Relaxed);
         let age = now.saturating_sub(last);
+        let version = node.version.load(Ordering::Relaxed);
 
-        node.children.is_empty() && age > max_age_secs
+        // Prune only leaf nodes older than max_age_secs with no active invalidation (version 0).
+        node.children.is_empty() && age > max_age_secs && version == 0
     }
 
     fn traverse_and_touch(&self, tag: &str, now: u64) -> Arc<TrieNode> {
@@ -401,13 +403,40 @@ mod tests {
     fn test_pruning() {
         let trie = PrefixTrie::new();
 
-        trie.invalidate("user:1");
+        // This would create nodes with version 0 if we just accessed them
+        // but invalidate sets version > 0.
+        // Let's test with a simple walk-and-touch (which sets version 0)
+        trie.traverse_and_touch("user:1", now_secs());
+
         trie.prune(100);
         assert_eq!(trie.root.children.len(), 1);
 
         std::thread::sleep(std::time::Duration::from_secs(2));
         trie.prune(0);
+        // Now it should be pruned because version is 0
         assert_eq!(trie.root.children.len(), 0);
+    }
+
+    #[test]
+    fn test_prune_preserves_invalidations() {
+        let trie = PrefixTrie::new();
+
+        // 1. Invalidate a tag (version > 0)
+        trie.invalidate("user:1");
+
+        // 2. Wait a bit
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // 3. Prune with age 0 (aggressive)
+        trie.prune(0);
+
+        // 4. MUST NOT be pruned because it has an active invalidation (version > 0)
+        assert_eq!(
+            trie.root.children.len(),
+            1,
+            "Nodes with invalidations must not be pruned"
+        );
+        assert!(trie.root.children.contains_key("user"));
     }
 
     #[test]

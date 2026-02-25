@@ -9,7 +9,7 @@ use lmdb::{
 use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(crate) struct LmdbStorage {
     env: Arc<Environment>,
@@ -19,7 +19,6 @@ pub(crate) struct LmdbStorage {
     db_lru_index: Database,
     db_meta: Database,
     count: Arc<AtomicUsize>,
-    last_touch_secs: AtomicU64,
 }
 
 impl SyncStorage for LmdbStorage {
@@ -305,7 +304,6 @@ impl LmdbStorage {
             db_lru_index,
             db_meta,
             count: Arc::new(AtomicUsize::new(count)),
-            last_touch_secs: AtomicU64::new(0),
         })
     }
 
@@ -467,10 +465,7 @@ impl Storage for LmdbStorage {
     }
 
     fn check_and_update_touch_gate(&self) -> bool {
-        // Global 1s gate: safe because the TTI worker deduplicates per key at lru_update_interval.
-        let now = now_secs();
-        let last = self.last_touch_secs.swap(now, Ordering::Relaxed);
-        now > last
+        true
     }
 
     fn try_set_sync(
