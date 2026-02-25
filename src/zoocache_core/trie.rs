@@ -120,7 +120,7 @@ impl PrefixTrie {
     }
 
     pub fn get_tag_version(&self, tag: &str) -> u64 {
-        let parts: Vec<&str> = tag.split(':').collect();
+        let parts: SmallVec<[&str; 8]> = tag.split(':').filter(|s| !s.is_empty()).collect();
         let versions = self.get_path_versions(&parts, now_secs());
         *versions.last().unwrap_or(&0)
     }
@@ -173,13 +173,16 @@ impl PrefixTrie {
         node.children.is_empty() && age > max_age_secs && version == 0
     }
 
+    #[inline]
     fn traverse_and_touch(&self, tag: &str, now: u64) -> Arc<TrieNode> {
         let mut current = Arc::clone(&self.root);
         current.touch(now);
         for part in tag.split(':') {
-            let next = self.get_or_create_child(&current, part);
-            current = next;
-            current.touch(now);
+            if !part.is_empty() {
+                let next = self.get_or_create_child(&current, part);
+                current = next;
+                current.touch(now);
+            }
         }
         current
     }
@@ -225,7 +228,11 @@ pub(crate) fn build_dependency_snapshots(
 ) -> Arc<HashMap<String, DepSnapshot>> {
     let mut snapshots = HashMap::with_capacity_and_hasher(dependencies.len(), Default::default());
     for tag in dependencies {
-        let parts: SmallVec<[String; 8]> = tag.split(':').map(|s| s.to_string()).collect();
+        let parts: SmallVec<[String; 8]> = tag
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
         let path_versions = trie.get_path_versions(&parts, now);
         snapshots.insert(
             tag,

@@ -26,7 +26,6 @@ struct SerializableCacheEntry {
     #[serde(with = "serde_bytes")]
     value: Vec<u8>,
     dependencies: HashMap<String, DepSnapshot>,
-    trie_version: u64,
 }
 
 pub(crate) struct CacheEntry {
@@ -35,7 +34,10 @@ pub(crate) struct CacheEntry {
     pub trie_version: u64,
 }
 
-const MAGIC_HEADER: &[u8] = b"ZOO1";
+const MAGIC_HEADER: &[u8] = b"ZOO2";
+const MAGIC_LEN: usize = 4;
+const VERSION_LEN: usize = 8;
+const HEADER_LEN: usize = MAGIC_LEN + VERSION_LEN;
 
 impl CacheEntry {
     pub fn serialize(&self, py: Python) -> PyResult<Vec<u8>> {
@@ -52,14 +54,14 @@ impl CacheEntry {
             let entry = SerializableCacheEntry {
                 value: value_buf.clone(),
                 dependencies: self.dependencies.as_ref().clone(),
-                trie_version: self.trie_version,
             };
 
             let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
             let compressed = compress_prepend_size(&packed);
 
-            let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
+            let mut final_data = Vec::with_capacity(HEADER_LEN + compressed.len());
             final_data.extend_from_slice(MAGIC_HEADER);
+            final_data.extend_from_slice(&self.trie_version.to_le_bytes());
             final_data.extend_from_slice(&compressed);
 
             Ok(final_data)
@@ -67,13 +69,19 @@ impl CacheEntry {
     }
 
     pub fn deserialize(py: Python, data: &[u8]) -> PyResult<Self> {
-        if data.len() < MAGIC_HEADER.len() || &data[..MAGIC_HEADER.len()] != MAGIC_HEADER {
+        if data.len() < HEADER_LEN || &data[..MAGIC_LEN] != MAGIC_HEADER {
             return Err(to_runtime_err(
                 "Invalid cache file format or version mismatch",
             ));
         }
 
-        let payload = &data[MAGIC_HEADER.len()..];
+        let trie_version = u64::from_le_bytes(
+            data[MAGIC_LEN..HEADER_LEN]
+                .try_into()
+                .map_err(|_| to_runtime_err("Invalid version bytes"))?,
+        );
+
+        let payload = &data[HEADER_LEN..];
         let decompressed = decompress_size_prepended(payload).map_err(to_runtime_err)?;
         let entry: SerializableCacheEntry =
             rmp_serde::from_slice(&decompressed).map_err(to_runtime_err)?;
@@ -87,30 +95,18 @@ impl CacheEntry {
         Ok(Self {
             value: py_val.into(),
             dependencies: Arc::new(entry.dependencies),
-            trie_version: entry.trie_version,
+            trie_version,
         })
     }
 
     pub fn update_trie_version_raw(data: &[u8], new_version: u64) -> PyResult<Vec<u8>> {
-        if data.len() < MAGIC_HEADER.len() || &data[..MAGIC_HEADER.len()] != MAGIC_HEADER {
+        if data.len() < HEADER_LEN || &data[..MAGIC_LEN] != MAGIC_HEADER {
             return Err(to_runtime_err("Invalid format"));
         }
 
-        let payload = &data[MAGIC_HEADER.len()..];
-        let decompressed = decompress_size_prepended(payload).map_err(to_runtime_err)?;
-        let mut entry: SerializableCacheEntry =
-            rmp_serde::from_slice(&decompressed).map_err(to_runtime_err)?;
-
-        entry.trie_version = new_version;
-
-        let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
-        let compressed = compress_prepend_size(&packed);
-
-        let mut final_data = Vec::with_capacity(MAGIC_HEADER.len() + compressed.len());
-        final_data.extend_from_slice(MAGIC_HEADER);
-        final_data.extend_from_slice(&compressed);
-
-        Ok(final_data)
+        let mut result = data.to_vec();
+        result[MAGIC_LEN..HEADER_LEN].copy_from_slice(&new_version.to_le_bytes());
+        Ok(result)
     }
 }
 
