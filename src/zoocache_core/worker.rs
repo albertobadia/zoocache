@@ -1,11 +1,12 @@
 use crate::bus::InvalidateBus;
 use crate::storage::{CacheEntry, Storage};
 use crate::trie::PrefixTrie;
+use std::panic::AssertUnwindSafe;
+use crossbeam_channel::{self, RecvTimeoutError, Sender};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,7 +20,7 @@ pub(crate) enum WorkerMsg {
 }
 
 pub(crate) struct TtiState {
-    pub(crate) tx: SyncSender<WorkerMsg>,
+    pub(crate) tx: Sender<WorkerMsg>,
     pub(crate) dropped: AtomicU64,
 }
 
@@ -49,20 +50,30 @@ pub(crate) fn spawn_worker(
     bus_is_remote: bool,
     lru_update_interval: u64,
     flight_timeout: u64,
-) -> SyncSender<WorkerMsg> {
-    let (tx, rx) = mpsc::sync_channel::<WorkerMsg>(1_000_000);
+) -> Sender<WorkerMsg> {
+    let (tx, rx) = crossbeam_channel::bounded::<WorkerMsg>(1_000_000);
     let tx_clone = tx.clone();
 
     thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
+        loop {
+            let storage = Arc::clone(&storage);
+            let trie = trie.clone();
+            let bus = Arc::clone(&bus);
+            let node_id = node_id.clone();
+            let flights = Arc::clone(&flights);
+            let silent_errors = Arc::clone(&silent_errors);
+            let rx = rx.clone();
 
-        rt.block_on(async move {
-            let mut sys = sysinfo::System::new_all();
-            let mut local_metrics: HashMap<String, f64> = HashMap::new();
-            let mut last_heartbeat = Instant::now();
+            let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                rt.block_on(async move {
+                    let mut sys = sysinfo::System::new_all();
+                    let mut local_metrics: HashMap<String, f64> = HashMap::new();
+                    let mut last_heartbeat = Instant::now();
 
             let mut last_touches =
                 lru::LruCache::<String, Instant>::new(NonZeroUsize::new(10000).unwrap());
@@ -79,8 +90,8 @@ pub(crate) fn spawn_worker(
 
                 match rx.recv_timeout(Duration::from_secs(1)) {
                     Ok(m) => messages.push(m),
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
                 };
 
                 if !messages.is_empty() {
@@ -182,7 +193,17 @@ pub(crate) fn spawn_worker(
                 }
             }
         });
-    });
+        }));
+
+        match res {
+            Ok(_) => break, // Normal exit (Disconnected)
+            Err(_) => {
+                log::error!("Background worker panicked! Restarting in 3 seconds...");
+                std::thread::sleep(Duration::from_secs(3));
+            }
+        }
+    }
+});
 
     tx_clone
 }

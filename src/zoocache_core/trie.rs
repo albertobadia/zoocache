@@ -1,6 +1,7 @@
 use crate::utils::{now_nanos, now_secs};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,8 +58,8 @@ impl PrefixTrie {
         current.version.fetch_max(version, Ordering::SeqCst);
     }
 
-    pub fn get_path_versions<S: AsRef<str>>(&self, parts: &[S], now: u64) -> Vec<u64> {
-        let mut versions = Vec::with_capacity(parts.len() + 1);
+    pub fn get_path_versions<S: AsRef<str>>(&self, parts: &[S], now: u64) -> SmallVec<[u64; 8]> {
+        let mut versions = SmallVec::with_capacity(parts.len() + 1);
         let mut current = Arc::clone(&self.root);
         current.touch(now);
         versions.push(current.version.load(Ordering::SeqCst));
@@ -199,8 +200,8 @@ impl PrefixTrie {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct DepSnapshot {
-    pub parts: Vec<String>,
-    pub path_versions: Vec<u64>,
+    pub parts: SmallVec<[String; 8]>,
+    pub path_versions: SmallVec<[u64; 8]>,
 }
 
 #[inline]
@@ -225,7 +226,7 @@ pub(crate) fn build_dependency_snapshots(
 ) -> Arc<HashMap<String, DepSnapshot>> {
     let mut snapshots = HashMap::with_capacity(dependencies.len());
     for tag in dependencies {
-        let parts: Vec<String> = tag.split(':').map(|s| s.to_string()).collect();
+        let parts: SmallVec<[String; 8]> = tag.split(':').map(|s| s.to_string()).collect();
         let path_versions = trie.get_path_versions(&parts, now);
         snapshots.insert(
             tag,
@@ -247,7 +248,10 @@ mod tests {
         let trie = PrefixTrie::new();
         let parts = vec!["user".to_string(), "1".to_string()];
         let now = now_secs();
-        assert_eq!(trie.get_path_versions(&parts, now), vec![0, 0, 0]);
+        assert_eq!(
+            trie.get_path_versions(&parts, now).into_vec(),
+            vec![0, 0, 0]
+        );
 
         trie.invalidate("user:1");
         let v1 = trie.get_path_versions(&parts, now);
@@ -312,7 +316,7 @@ mod tests {
 
         trie.clear();
         let v2 = trie.get_path_versions(&parts, now);
-        assert_eq!(v2, vec![0, 0, 0]);
+        assert_eq!(v2.into_vec(), vec![0, 0, 0]);
     }
 
     #[test]
@@ -361,9 +365,9 @@ mod tests {
         );
 
         assert_eq!(snapshots.len(), 2);
-        assert_eq!(snapshots["user:1"].parts, vec!["user", "1"]);
+        assert_eq!(snapshots["user:1"].parts.as_slice(), &["user", "1"]);
         assert!(snapshots["user:1"].path_versions[2] > 0);
-        assert_eq!(snapshots["user:2"].path_versions, vec![0, 0, 0]);
+        assert_eq!(snapshots["user:2"].path_versions.as_slice(), &[0, 0, 0]);
     }
 
     #[test]
