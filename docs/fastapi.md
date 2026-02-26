@@ -1,126 +1,313 @@
 # FastAPI Integration
 
-Zoocache provides an optional, out-of-box integration with [FastAPI](https://fastapi.tiangolo.com/) that makes caching your endpoints trivial while keeping the incredible Developer Experience (DX) that FastAPI is known for.
+ZooCache provides seamless integration with FastAPI through the `@cache_endpoint` decorator. Cache your endpoints with minimal code changes while getting all ZooCache benefits: semantic invalidation, anti-avalanche protection, and distributed consistency.
 
-By using the `@cache_endpoint` decorator, you get the exact same benefits of `zoocache.cacheable`—like Anti-Avalanche protection, Semantic Invalidation, and High Performance—tailored flawlessly for FastAPI.
+## Why Use ZooCache with FastAPI?
+
+- ✅ **Transparent**: Add `@cache_endpoint` to your route, everything else is automatic
+- ✅ **Pydantic Native**: Automatically serializes Pydantic models to cache
+- ✅ **FastAPI Aware**: Automatically handles `Request`, `Response`, `BackgroundTasks` objects
+- ✅ **Dependency Injection**: Works seamlessly with FastAPI's `Depends()`
+- ✅ **Anti-Avalanche**: Multiple concurrent requests for the same endpoint execute only once
+- ✅ **Distributed**: Works across multiple instances via Redis Pub/Sub
 
 ## Installation
 
-The FastAPI integration is available as an optional extra.
-
-Using `uv` (recommended):
 ```bash
+# Using uv (recommended)
 uv add "zoocache[fastapi]"
-```
 
-Using `pip`:
-```bash
+# Using pip
 pip install "zoocache[fastapi]"
 ```
 
+> **Note**: The `fastapi` extra is required for this integration.
+
 ## Quick Start
 
-Import the decorator **directly** from the `zoocache.contrib.fastapi.route` module.
+### Basic Endpoint Caching
 
 ```python
 from fastapi import FastAPI
-from zoocache.contrib.fastapi.route import cache_endpoint
+from zoocache import configure, add_deps
+from zoocache.contrib.fastapi import cache_endpoint
+
+# Configure ZooCache first!
+configure()
+
+app = FastAPI()
+
+@app.get("/users/{user_id}")
+@cache_endpoint()
+async def get_user(user_id: int):
+    # Register dependencies inside the function
+    add_deps([f"user:{user_id}"])
+    
+    # This runs only on cache miss
+    # Concurrent identical requests wait for this single execution
+    return {"id": user_id, "name": f"User {user_id}"}
+```
+
+### With Pydantic Models
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+from zoocache import configure, add_deps
+from zoocache.contrib.fastapi import cache_endpoint
+
+configure()
+
+app = FastAPI()
+
+class User(BaseModel):
+    id: int
+    username: str
+    email: str
+
+@app.get("/users/{user_id}", response_model=User)
+@cache_endpoint()
+async def get_user(user_id: int) -> User:
+    add_deps([f"user:{user_id}"])
+    # On cache miss, the return value is automatically serialized
+    # On cache hit, the dict is automatically converted to User
+    return User(id=user_id, username="alice", email="alice@example.com")
+```
+
+## How It Works
+
+The `@cache_endpoint` decorator:
+
+1. **Caches the response**: Serializes the return value using MsgPack + LZ4
+2. **Extracts cache key**: Uses path parameters and query parameters (not FastAPI internals)
+3. **Handles Pydantic**: Automatically converts Pydantic models to dict for caching
+4. **Filters FastAPI objects**: Ignores `Request`, `Response`, `BackgroundTasks` in cache key
+
+## Advanced Usage
+
+### Using with Dependencies
+
+FastAPI's dependency injection works seamlessly:
+
+```python
+from typing import Annotated
+from fastapi import FastAPI, Depends
+from zoocache import configure
+from zoocache.contrib.fastapi import cache_endpoint
+
+configure()
+
+app = FastAPI()
+
+async def get_current_user():
+    # This runs before the endpoint
+    return {"id": 1, "username": "admin"}
+
+@app.get("/dashboard")
+@cache_endpoint(deps=lambda user: [f"dashboard:{user['id']}"])
+async def get_dashboard(
+    user: Annotated[dict, Depends(get_current_user)]
+):
+    return {"user": user, "data": "expensive computation"}
+```
+
+### Dynamic Dependencies
+
+Add dependencies at runtime:
+
+```python
+from fastapi import FastAPI
+from zoocache import configure, add_deps
+from zoocache.contrib.fastapi import cache_endpoint
+
+configure()
+
+app = FastAPI()
+
+@app.get("/orders/{order_id}")
+@cache_endpoint()
+async def get_order(order_id: int):
+    # Fetch from database
+    order = db.get_order(order_id)
+    
+    # Add dependencies dynamically
+    add_deps([
+        f"order:{order_id}",
+        f"user:{order.user_id}",
+    ])
+    
+    return order
+```
+
+### Filtering Query Parameters
+
+Control which parameters affect the cache key:
+
+```python
+@app.get("/search")
+@cache_endpoint(
+    deps=lambda q, category: [f"search:{category}:{q}"]
+)
+async def search(q: str, category: str = "all", page: int = 1):
+    # Only q and category affect cache key
+    # page is ignored for caching purposes
+    return {"results": [], "page": page}
+```
+
+### Caching POST, PUT, DELETE
+
+You can cache any HTTP method:
+
+```python
+@app.post("/items/")
+@cache_endpoint(deps=lambda item: [f"item:{item['id']}"])
+async def create_item(item: dict):
+    return db.create(item)
+
+@app.put("/items/{item_id}")
+@cache_endpoint(deps=lambda item_id: [f"item:{item_id}"])
+async def update_item(item_id: int, item: dict):
+    return db.update(item_id, item)
+
+@app.delete("/items/{item_id}")
+async def delete_item(item_id: int):
+    db.delete(item_id)
+    invalidate(f"item:{item_id}")  # Manual invalidation
+    return {"status": "deleted"}
+```
+
+## Invalidation Patterns
+
+### Automatic Invalidation
+
+Create a separate endpoint to invalidate:
+
+```python
+from fastapi import FastAPI, HTTPException
+from zoocache import configure, invalidate
+from zoocache.contrib.fastapi import cache_endpoint
+
+configure()
 
 app = FastAPI()
 
 @app.get("/users/{user_id}")
 @cache_endpoint(deps=lambda user_id: [f"user:{user_id}"])
 async def get_user(user_id: int):
-    # This function only runs if the cache misses.
-    # Concurrent identical requests will wait for this single execution.
-    return {"id": user_id, "name": "Alice"}
+    return {"id": user_id}
+
+@app.put("/users/{user_id}")
+async def update_user(user_id: int, data: dict):
+    db.save(user_id, data)
+    invalidate(f"user:{user_id}")  # Invalidate the cached GET
+    return {"status": "updated"}
 ```
 
-## Why `@cache_endpoint` instead of `@cacheable`?
+### Hierarchical Invalidation
 
-While you could wrap your database calls using the standard `@cacheable`, using `@cache_endpoint` at the router level gives you two massive advantages:
-
-### 1. Transparent Dependency Filtering
-FastAPI heavily relies on injecting context objects like `Request`, `Response`, and `BackgroundTasks` into your endpoint signature. If you try to pass these to the standard `@cacheable`, it will crash because it cannot hash them reliably to figure out the cache key.
-
-`@cache_endpoint` automatically understands these FastAPI-specific objects and strips them out of the key generation logic without you having to lift a finger.
+Cache multiple related endpoints and invalidate together:
 
 ```python
-from fastapi import Request
+@app.get("/users/{user_id}")
+@cache_endpoint(deps=lambda user_id: [f"user:{user_id}"])
+async def get_user(user_id: int):
+    return {"id": user_id}
 
-@app.get("/expensive-report")
-@cache_endpoint()
-async def expensive_report(request: Request, filters: str):
-    # 'request' is ignored for the cache key, but 'filters' is used.
-    return {"data": "A lot of data"}
+@app.get("/users/{user_id}/profile")
+@cache_endpoint(deps=lambda user_id: [f"user:{user_id}:profile"])
+async def get_user_profile(user_id: int):
+    return {"user_id": user_id}
+
+@app.get("/users/{user_id}/orders")
+@cache_endpoint(deps=lambda user_id: [f"user:{user_id}:orders"])
+async def get_user_orders(user_id: int):
+    return []
+
+# Invalidate user AND all related data
+invalidate(f"user:{user_id}")
 ```
 
-### 2. Native Pydantic Serialization
-If your endpoint returns a Pydantic `BaseModel`, `@cache_endpoint` automatically intercepts the response and serializes it using `.model_dump()` before storing it in Zoocache (which uses high-speed MsgPack/LZ4 under the hood).
+## Configuration Options
 
-When the cache is hit, the decorator returns the raw dictionary. FastAPI then takes this dictionary and seamlessly converts it into the final JSON response.
+The `@cache_endpoint` decorator accepts these options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `deps` | `Callable` or `list` | `None` | Dependencies for cache invalidation |
+| `ttl` | `int` | `None` | Time-to-live in seconds |
+| `key_builder` | `Callable` | `None` | Custom function to build cache key |
 
 ```python
+@app.get("/items/{item_id}")
+@cache_endpoint(
+    deps=lambda item_id: [f"item:{item_id}"],
+    ttl=300,  # 5 minutes
+)
+async def get_item(item_id: int):
+    return {"id": item_id}
+```
+
+## Comparison: `@cacheable` vs `@cache_endpoint`
+
+| Feature | `@cacheable` | `@cache_endpoint` |
+|---------|--------------|-------------------|
+| Use case | Any function | FastAPI endpoints |
+| Pydantic support | ❌ Manual | ✅ Automatic |
+| Request filtering | ❌ | ✅ |
+| BackgroundTasks handling | ❌ | ✅ |
+| Depends integration | Manual | Automatic |
+
+## Complete Example
+
+```python
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from zoocache.contrib.fastapi.route import cache_endpoint
+from typing import Optional
+from zoocache import configure, invalidate
+from zoocache.contrib.fastapi import cache_endpoint
 
-class UserProfile(BaseModel):
+# Configure first!
+configure()
+
+app = FastAPI()
+
+class Item(BaseModel):
     id: int
-    username: str
+    name: str
+    price: float
+    quantity: int
 
-@app.get("/profile/{user_id}", response_model=UserProfile)
-@cache_endpoint()
-async def get_profile(user_id: int) -> UserProfile:
-    # On a cache miss, Zoocache automatically dumps the UserProfile to a dict internally
-    return UserProfile(id=user_id, username="Alice")
+# Cache GET endpoints
+@app.get("/items/{item_id}", response_model=Item)
+@cache_endpoint(deps=lambda item_id: [f"item:{item_id}"])
+async def get_item(item_id: int) -> Item:
+    # Simulate DB call
+    return Item(id=item_id, name=f"Item {item_id}", price=9.99, quantity=100)
+
+@app.get("/items/", response_model=list[Item])
+@cache_endpoint(deps=lambda: ["items:list"])
+async def list_items() -> list[Item]:
+    # Simulate DB call
+    return [Item(id=i, name=f"Item {i}", price=9.99, quantity=100) for i in range(10)]
+
+# Update endpoint with manual invalidation
+@app.put("/items/{item_id}", response_model=Item)
+async def update_item(item_id: int, item: Item) -> Item:
+    saved = db.save(item_id, item)
+    invalidate(f"item:{item_id}")  # Invalidate cached GET
+    invalidate("items:list")  # Invalidate list
+    return saved
+
+@app.delete("/items/{item_id}")
+async def delete_item(item_id: int):
+    db.delete(item_id)
+    invalidate(f"item:{item_id}")
+    invalidate("items:list")
+    return {"status": "deleted"}
 ```
 
-## Advanced Dependencies (Depends)
+## Next Steps
 
-FastAPI's dependency injection system (`Depends`) works perfectly with `@cache_endpoint`. The decorator executes *after* FastAPI has resolved the dependencies, so the resolved values are used to construct the cache key.
-
-```python
-from typing import Annotated
-from fastapi import Depends
-
-async def pagination_params(skip: int = 0, limit: int = 100):
-    return {"skip": skip, "limit": limit}
-
-@app.get("/items/")
-@cache_endpoint(deps=lambda p: [f"items_page:{p['skip']}"])
-async def list_items(p: Annotated[dict, Depends(pagination_params)]):
-    # The cache key will automatically consider the resolved dictionary 'p'
-    return {"items": [], "pagination": p}
-```
-
-## Dynamic Dependencies (`add_deps`)
-
-Sometimes you don't know the exact cache dependencies upfront, or you want to combine the initial `deps` with some dynamic keys calculated inside the endpoint. You can safely use the standard `zoocache.add_deps` function inside your FastAPI endpoints just as you would in normal functions.
-
-```python
-from zoocache import add_deps
-from zoocache.contrib.fastapi.route import cache_endpoint
-
-@app.get("/orders/{order_id}")
-@cache_endpoint() # or @cache_endpoint without parens
-async def get_order(order_id: int):
-    # Fetch data
-    order = db.get_order(order_id)
-    
-    # Store this request under the specific order ID AND the user's ID
-    add_deps([
-        f"order:{order_id}",
-        f"user:{order.user_id}"
-    ])
-    
-    return order
-```
-
-## Rules and Caveats
-
-- **Sync and Async**: `@cache_endpoint` supports both standard `def` and `async def` endpoints perfectly.
-- **Side effects in Depends**: Re-read the caching rules carefully. If you use a FastAPI dependency (`Depends()`) that causes a side-effect (like saving an audit log to a database), be aware that if the endpoint hits the cache, the endpoint code itself is skipped, *but the FastAPI dependencies are still executed by FastAPI before reaching the cache decorator*.
-
-## Summary
-
-`@cache_endpoint` is the single most powerful way to bolt Zoocache onto FastAPI, offering distributed cache, thundering-herd protection, and semantic invalidation with near-zero boilerplate.
+- [→ Configuration](configuration/index.md) — Customize storage, TTL, serialization
+- [→ Concepts](concepts.md) — Learn about dependencies and invalidation
+- [→ CLI](cli.md) — Monitor your cache with the TUI
