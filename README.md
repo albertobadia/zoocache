@@ -10,6 +10,16 @@
   ZooCache is a high-performance caching library with a Rust core, designed for applications where data consistency and read performance are critical.
 </p>
 
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square&logo=python"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square"></a>
+  <a href="https://pypi.org/project/zoocache/"><img alt="PyPI" src="https://img.shields.io/pypi/v/zoocache?style=flat-square&logo=pypi&logoColor=white"></a>
+  <a href="https://pypi.org/project/zoocache/"><img alt="Downloads" src="https://img.shields.io/pepy/dt/zoocache?style=flat-square&color=blue"></a>
+  <a href="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/albertobadia/zoocache/ci.yml?branch=main&style=flat-square&logo=github"></a>
+  <a href="https://albertobadia.github.io/zoocache/benchmarks/"><img alt="Benchmarks" src="https://img.shields.io/badge/benchmarks-charts-orange?style=flat-square&logo=google-cloud&logoColor=white"></a>
+  <a href="https://zoocache.readthedocs.io/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/zoocache?style=flat-square&logo=readthedocs"></a>
+</p>
+
 ---
 
 ## Quick Start
@@ -258,18 +268,6 @@ Zoocache is continuously benchmarked to ensure zero performance regressions.
 - [**ADR 0007: Zero-Bridge Serialization**](docs/adr/0007-zero-bridge-serialization.md)
 - [**ADR 0008: Redis Bus Connection Pooling**](docs/adr/0008-redis-bus-connection-pooling.md)
 - [**ADR 0009: Robust Sync and Error Handling**](docs/adr/0009-robust-sync-and-error-handling.md)
-
----
-
-<p align="center">
-  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square&logo=python"></a>
-  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square"></a>
-  <a href="https://pypi.org/project/zoocache/"><img alt="PyPI" src="https://img.shields.io/pypi/v/zoocache?style=flat-square&logo=pypi&logoColor=white"></a>
-  <a href="https://pypi.org/project/zoocache/"><img alt="Downloads" src="https://img.shields.io/pepy/dt/zoocache?style=flat-square&color=blue"></a>
-  <a href="https://github.com/albertobadia/zoocache/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/albertobadia/zoocache/ci.yml?branch=main&style=flat-square&logo=github"></a>
-  <a href="https://albertobadia.github.io/zoocache/benchmarks/"><img alt="Benchmarks" src="https://img.shields.io/badge/benchmarks-charts-orange?style=flat-square&logo=google-cloud&logoColor=white"></a>
-  <a href="https://zoocache.readthedocs.io/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/zoocache?style=flat-square&logo=readthedocs"></a>
-</p>
 
 ---
 
