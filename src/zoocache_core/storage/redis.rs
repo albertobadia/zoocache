@@ -73,7 +73,10 @@ impl Storage for RedisStorage {
     async fn get(&self, key: &str) -> StorageResult {
         let mut conn = match self.get_conn().await {
             Ok(c) => c,
-            Err(_) => return StorageResult::NotFound,
+            Err(e) => {
+                log::warn!("Redis connection failed for key '{}': {}", key, e);
+                return StorageResult::Error;
+            }
         };
 
         let now = now_secs() as f64;

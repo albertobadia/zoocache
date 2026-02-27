@@ -31,8 +31,10 @@ impl Core {
         let max_entries = self.max_entries;
         let trie = self.trie.clone();
 
-        if let Ok(()) = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl) {
-            if let Some(max) = max_entries
+        let res = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl);
+        if storage.is_sync_storage() || res.is_ok() {
+            if let Ok(()) = res
+                && let Some(max) = max_entries
                 && let Some(current) = storage.try_len_sync()
                 && current > max
             {
@@ -41,7 +43,7 @@ impl Core {
                     trie.prune(0);
                 }
             }
-            return Ok(());
+            return res;
         }
 
         py.detach(|| {
@@ -149,9 +151,12 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let trie = self.trie.clone();
 
-        if let Ok(()) = storage.try_clear_sync() {
-            trie.clear();
-            return Ok(());
+        let res = storage.try_clear_sync();
+        if storage.is_sync_storage() || res.is_ok() {
+            if res.is_ok() {
+                trie.clear();
+            }
+            return res;
         }
 
         py.detach(|| {

@@ -22,6 +22,7 @@ impl Core {
                 return Ok(None);
             }
             Some(crate::storage::StorageResult::NotFound) => return Ok(None),
+            Some(crate::storage::StorageResult::Error) => return Ok(None),
             None => return Ok(None),
         };
 
@@ -92,8 +93,9 @@ impl Core {
         py: Python<'py>,
         key: &str,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        if let Ok(res @ (Some(_), false, true)) = self.bridge_get_or_entry_sync(py, key) {
-            return Ok(res);
+        let res = self.bridge_get_or_entry_sync(py, key);
+        if res.as_ref().is_ok_and(|r| r.2) {
+            return res;
         }
 
         let storage = Arc::clone(&self.storage);
@@ -136,6 +138,9 @@ impl Core {
                         return Ok((None, true, false));
                     }
                     crate::storage::StorageResult::NotFound => {
+                        return Ok((None, true, false));
+                    }
+                    crate::storage::StorageResult::Error => {
                         return Ok((None, true, false));
                     }
                 };
@@ -227,6 +232,9 @@ impl Core {
                 crate::storage::StorageResult::NotFound => {
                     return Ok((None, true, false));
                 }
+                crate::storage::StorageResult::Error => {
+                    return Ok((None, true, false));
+                }
             };
 
             let current_global_version = trie.get_global_version();
@@ -289,8 +297,9 @@ impl Core {
         py: Python<'py>,
         key: &str,
     ) -> PyResult<Option<Py<PyAny>>> {
-        if let Ok(Some(val)) = self.bridge_get_sync(py, key) {
-            return Ok(Some(val));
+        let res = self.bridge_get_sync(py, key);
+        if self.storage.is_sync_storage() || res.as_ref().is_ok_and(|v| v.is_some()) {
+            return res;
         }
 
         let storage = Arc::clone(&self.storage);
@@ -311,6 +320,7 @@ impl Core {
                         return Ok(None);
                     }
                     crate::storage::StorageResult::NotFound => return Ok(None),
+                    crate::storage::StorageResult::Error => return Ok(None),
                 };
 
                 let current_global_version = trie.get_global_version();
@@ -385,6 +395,7 @@ impl Core {
                     return Ok(None);
                 }
                 crate::storage::StorageResult::NotFound => return Ok(None),
+                crate::storage::StorageResult::Error => return Ok(None),
             };
 
             let current_global_version = trie.get_global_version();

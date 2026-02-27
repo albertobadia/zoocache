@@ -22,6 +22,7 @@ impl TrieNode {
 pub(crate) struct PrefixTrie {
     root: Arc<TrieNode>,
     global_version: Arc<AtomicU64>,
+    min_pruned_version: Arc<AtomicU64>,
 }
 
 impl PrefixTrie {
@@ -29,6 +30,7 @@ impl PrefixTrie {
         Self {
             root: Arc::new(TrieNode::default()),
             global_version: Arc::new(AtomicU64::new(0)),
+            min_pruned_version: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -100,7 +102,15 @@ impl PrefixTrie {
             let next_node = if !create && is_valid {
                 match current.children.get(part.as_ref()) {
                     Some(n) => Arc::clone(n.value()),
-                    None => return true,
+                    None => {
+                        let min_p = self.min_pruned_version.load(Ordering::SeqCst);
+                        for v in &snapshot_versions[i + 1..] {
+                            if *v > 0 && *v < min_p {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
                 }
             } else {
                 self.get_or_create_child(&current, part.as_ref())
@@ -139,38 +149,41 @@ impl PrefixTrie {
 
     pub fn prune(&self, max_age_secs: u64) {
         let now = now_secs();
-        let mut to_remove = Vec::new();
-
-        for item in self.root.children.iter() {
-            if Self::should_prune(item.value(), now, max_age_secs) {
-                to_remove.push(item.key().clone());
-            }
-        }
-
-        for key in to_remove {
-            self.root.children.remove(&key);
-        }
+        self.root.children.retain(|_, node| {
+            !Self::should_prune(node, now, max_age_secs, &self.min_pruned_version)
+        });
     }
 
-    fn should_prune(node: &Arc<TrieNode>, now: u64, max_age_secs: u64) -> bool {
-        let mut children_to_remove = Vec::new();
+    #[cfg(test)]
+    pub fn force_prune_all(&self) {
+        self.root
+            .children
+            .retain(|_, node| !Self::should_prune(node, u64::MAX, 0, &self.min_pruned_version));
+    }
 
-        for child in node.children.iter() {
-            if Self::should_prune(child.value(), now, max_age_secs) {
-                children_to_remove.push(child.key().clone());
-            }
-        }
-
-        for key in children_to_remove {
-            node.children.remove(&key);
-        }
+    fn should_prune(
+        node: &Arc<TrieNode>,
+        now: u64,
+        max_age_secs: u64,
+        min_pruned: &AtomicU64,
+    ) -> bool {
+        node.children
+            .retain(|_, child| !Self::should_prune(child, now, max_age_secs, min_pruned));
 
         let last = node.last_accessed.load(Ordering::Relaxed);
         let age = now.saturating_sub(last);
         let version = node.version.load(Ordering::Relaxed);
 
-        // Prune only leaf nodes older than max_age_secs with no active invalidation (version 0).
-        node.children.is_empty() && age > max_age_secs && version == 0
+        // Prune nodes older than max_age_secs. If the node has an active invalidation (version > 0),
+        // we update the global barrier before removing it to prevent false positives.
+        if node.children.is_empty() && age > max_age_secs {
+            if version > 0 {
+                min_pruned.fetch_max(version, Ordering::SeqCst);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     #[inline]
@@ -390,7 +403,7 @@ mod tests {
         trie_new.invalidate("user:1");
         let v_new = trie_new.get_path_versions(&["user", "1"], now)[2];
 
-        assert!(v_new >= v_old); // Should be same or greater depending on clock
+        assert!(v_new >= v_old);
         assert!(!trie_new.check_and_catch_up(&["user", "1"], &snapshot_v, now, false));
     }
 
@@ -425,19 +438,26 @@ mod tests {
     }
 
     #[test]
-    fn test_prune_preserves_invalidations() {
+    fn test_prune_barrier_validation() {
         let trie = PrefixTrie::new();
+        let tag = "user:1";
 
-        trie.invalidate("user:1");
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        trie.prune(0);
+        let version = trie.invalidate(tag);
+        assert!(version > 0);
 
-        assert_eq!(
-            trie.root.children.len(),
-            1,
-            "Nodes with invalidations must not be pruned"
-        );
-        assert!(trie.root.children.contains_key("user"));
+        let snapshot_v = vec![0, 0, version];
+        // Before prune, it's valid if version matches
+        assert!(trie.check_and_catch_up(&["user", "1"], &snapshot_v, now_secs(), false));
+
+        // After force prune, it's still valid because version matches exactly
+        trie.force_prune_all();
+        assert!(trie.check_and_catch_up(&["user", "1"], &snapshot_v, now_secs(), false));
+
+        // But an older snapshot should now be INVALID because it's < min_pruned_version
+        let old_snapshot_v = vec![0, 0, version - 1];
+        assert!(!trie.check_and_catch_up(&["user", "1"], &old_snapshot_v, now_secs(), false));
+
+        assert_eq!(trie.root.children.len(), 0, "Nodes should be pruned if old");
     }
 
     #[test]
@@ -473,5 +493,58 @@ mod tests {
         let v_new = trie.invalidate(tag);
 
         assert!(v_new > far_future);
+    }
+
+    #[test]
+    fn test_prune_version_leak_fixed() {
+        let trie = PrefixTrie::new();
+        let tag = "leak:me";
+
+        // 1. Invalidate a tag (sets version > 0)
+        trie.invalidate(tag);
+
+        // 2. Force prune (simulating passage of time)
+        trie.force_prune_all();
+
+        // 3. Verify the node WAS pruned now
+        let parts = vec!["leak", "me"];
+        let path_versions = trie.get_path_versions(&parts, now_secs());
+
+        assert_eq!(
+            path_versions[2], 0,
+            "Fix verification: Node with version > 0 was correctly pruned."
+        );
+        assert!(
+            !trie.root.children.contains_key("leak"),
+            "Root child 'leak' should be gone if it had no other children"
+        );
+    }
+
+    #[test]
+    fn test_prune_barrier_security() {
+        let trie = PrefixTrie::new();
+        let tag = "secure:me";
+
+        // 1. Invalidate and get version
+        let v1 = trie.invalidate(tag);
+        assert!(v1 > 0);
+
+        // 2. Snapshot the version (simulating a cache entry)
+        let snapshot_v = vec![0, 0, v1 - 1]; // Older than current invalidation
+
+        // 3. Prune the node
+        trie.force_prune_all();
+
+        // 4. Validate! It should be INVALID (false) because v1-1 < min_pruned_version
+        let parts = vec!["secure", "me"];
+        assert!(!trie.check_and_catch_up(&parts, &snapshot_v, now_secs(), false));
+
+        // 5. Check a newer version. It should be VALID (true) because v2 >= min_pruned_version
+        let snapshot_v_new = vec![0, 0, v1 + 1];
+        assert!(trie.check_and_catch_up(&parts, &snapshot_v_new, now_secs(), false));
+
+        // 6. Check version 0 (never invalidated). It should be VALID (true)
+        let snapshot_v_zero = vec![0, 0, 0];
+        assert!(trie.check_and_catch_up(&parts, &snapshot_v_zero, now_secs(), false));
     }
 }

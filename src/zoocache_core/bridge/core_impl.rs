@@ -68,6 +68,22 @@ impl Core {
                         let node_id = node_id_owned.clone();
                         let req_id = req_id.to_string();
 
+                        if storage.is_sync_storage()
+                            && let Some(matching_keys) = storage.try_scan_keys_sync(&prefix)
+                        {
+                            let payload = serde_json::json!({
+                                "req_id": req_id,
+                                "node_id": node_id,
+                                "keys": matching_keys.into_iter().map(|(k, exp)| {
+                                    serde_json::json!({
+                                        "key": k,
+                                        "ttl_remaining": exp.and_then(|e| e.checked_sub(utils::now_secs()))
+                                    })
+                                }).collect::<Vec<_>>()
+                            });
+                            return serde_json::to_string(&payload).ok();
+                        }
+
                         tokio::task::block_in_place(|| {
                             let rt = tokio::runtime::Handle::current();
                             rt.block_on(async move {

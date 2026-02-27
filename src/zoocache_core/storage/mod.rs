@@ -114,6 +114,7 @@ pub(crate) enum StorageResult {
     Hit(Arc<CacheEntry>, Option<u64>, Option<Vec<u8>>),
     Expired,
     NotFound,
+    Error,
 }
 
 use async_trait::async_trait;
