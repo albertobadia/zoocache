@@ -46,7 +46,9 @@ impl PrefixTrie {
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
                 Some(v.max(now_n).max(v + 1))
             })
-            .unwrap();
+            .expect(
+                "fetch_update on atomic u64 should never fail when update function returns Some",
+            );
 
         prev.max(now_n).max(prev + 1)
     }
@@ -174,8 +176,6 @@ impl PrefixTrie {
         let age = now.saturating_sub(last);
         let version = node.version.load(Ordering::Relaxed);
 
-        // Prune nodes older than max_age_secs. If the node has an active invalidation (version > 0),
-        // we update the global barrier before removing it to prevent false positives.
         if node.children.is_empty() && age > max_age_secs {
             if version > 0 {
                 min_pruned.fetch_max(version, Ordering::SeqCst);
@@ -417,9 +417,9 @@ mod tests {
         trie.check_and_catch_up(&parts, &snapshot_versions, now, true);
 
         let current_versions = trie.get_path_versions(&parts, now);
-        assert_eq!(current_versions[2], 100); // acme caught up
-        assert_eq!(current_versions[4], 500); // 42 caught up
-        assert_eq!(current_versions[0], 0); // root stayed 0
+        assert_eq!(current_versions[2], 100);
+        assert_eq!(current_versions[4], 500);
+        assert_eq!(current_versions[0], 0);
     }
 
     #[test]
@@ -500,13 +500,9 @@ mod tests {
         let trie = PrefixTrie::new();
         let tag = "leak:me";
 
-        // 1. Invalidate a tag (sets version > 0)
         trie.invalidate(tag);
-
-        // 2. Force prune (simulating passage of time)
         trie.force_prune_all();
 
-        // 3. Verify the node WAS pruned now
         let parts = vec!["leak", "me"];
         let path_versions = trie.get_path_versions(&parts, now_secs());
 
@@ -525,25 +521,18 @@ mod tests {
         let trie = PrefixTrie::new();
         let tag = "secure:me";
 
-        // 1. Invalidate and get version
         let v1 = trie.invalidate(tag);
         assert!(v1 > 0);
 
-        // 2. Snapshot the version (simulating a cache entry)
-        let snapshot_v = vec![0, 0, v1 - 1]; // Older than current invalidation
-
-        // 3. Prune the node
-        trie.force_prune_all();
-
-        // 4. Validate! It should be INVALID (false) because v1-1 < min_pruned_version
+        let snapshot_v = vec![0, 0, v1 - 1];
         let parts = vec!["secure", "me"];
         assert!(!trie.check_and_catch_up(&parts, &snapshot_v, now_secs(), false));
 
-        // 5. Check a newer version. It should be VALID (true) because v2 >= min_pruned_version
+        trie.force_prune_all();
+
         let snapshot_v_new = vec![0, 0, v1 + 1];
         assert!(trie.check_and_catch_up(&parts, &snapshot_v_new, now_secs(), false));
 
-        // 6. Check version 0 (never invalidated). It should be VALID (true)
         let snapshot_v_zero = vec![0, 0, 0];
         assert!(trie.check_and_catch_up(&parts, &snapshot_v_zero, now_secs(), false));
     }

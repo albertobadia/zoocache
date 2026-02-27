@@ -1,5 +1,5 @@
 use crate::core::Core;
-use crate::flight::{complete_flight, try_enter_flight, wait_for_flight};
+use crate::flight::{FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use crate::worker::WorkerMsg;
 use crate::{RUNTIME, utils};
 use pyo3::prelude::*;
@@ -215,9 +215,22 @@ impl Core {
         let key_owned = key.to_string();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (_flight, is_leader) = try_enter_flight(&flights, &key_owned);
+            let (flight, is_leader) = try_enter_flight(&flights, &key_owned);
             if !is_leader {
-                return Ok((None, false, false));
+                let status = wait_for_flight(&flight, _flight_timeout).await;
+                return match status {
+                    FlightStatus::Done => {
+                        let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
+                        let val = Python::attach(|inner_py| {
+                            state.1.as_ref().map(|obj| obj.clone_ref(inner_py))
+                        });
+                        Ok((val, false, true))
+                    }
+                    FlightStatus::Error => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "Thundering herd leader failed",
+                    )),
+                    _ => Ok((None, false, false)),
+                };
             }
 
             let status = storage.get(&key_owned).await;

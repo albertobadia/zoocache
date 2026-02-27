@@ -108,6 +108,7 @@ impl Storage for RedisStorage {
         match Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new)) {
             Some(entry) => StorageResult::Hit(entry, expires_at, Some(data)),
             None => {
+                ::log::error!("Cache deserialization failed for key '{}'", key);
                 let _: () = redis::pipe()
                     .del(self.full_key(key))
                     .zrem(self.lru_key(), key)
