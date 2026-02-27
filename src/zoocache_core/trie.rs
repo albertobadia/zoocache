@@ -225,6 +225,9 @@ pub(crate) fn validate_dependencies(
     deps: &HashMap<String, DepSnapshot>,
     now: u64,
 ) -> bool {
+    if deps.is_empty() {
+        return true;
+    }
     for snapshot in deps.values() {
         if !trie.check_and_catch_up(&snapshot.parts, &snapshot.path_versions, now, true) {
             return false;

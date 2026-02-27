@@ -13,7 +13,7 @@ mod write;
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (node_id=None, storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30))]
+    #[pyo3(signature = (node_id=None, storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30, compression_threshold=256))]
     fn new(
         node_id: Option<&str>,
         storage_url: Option<&str>,
@@ -28,6 +28,7 @@ impl Core {
         auto_prune_secs: Option<u64>,
         auto_prune_interval: Option<u64>,
         lru_update_interval: u64,
+        compression_threshold: usize,
     ) -> PyResult<Self> {
         Self::bridge_new(
             node_id,
@@ -43,6 +44,7 @@ impl Core {
             auto_prune_secs,
             auto_prune_interval,
             lru_update_interval,
+            compression_threshold,
         )
     }
 

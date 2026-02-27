@@ -1,6 +1,6 @@
 use crate::bus::{InvalidateBus, LocalBus, RedisPubSubBus};
 use crate::core::Core;
-use crate::storage::{InMemoryStorage, LmdbStorage, RedisStorage};
+use crate::storage::{InMemoryStorage, LmdbStorage, RedisStorage, set_compression_threshold};
 use crate::trie::PrefixTrie;
 use crate::utils;
 use crate::utils::FastDashMap as DashMap;
@@ -25,7 +25,9 @@ impl Core {
         auto_prune_secs: Option<u64>,
         auto_prune_interval: Option<u64>,
         lru_update_interval: u64,
+        compression_threshold: usize,
     ) -> PyResult<Self> {
+        set_compression_threshold(compression_threshold);
         let storage: Arc<dyn crate::storage::Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => Arc::new(
                 RedisStorage::new(url, prefix, lru_update_interval).map_err(utils::to_conn_err)?,

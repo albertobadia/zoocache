@@ -151,9 +151,11 @@ impl Core {
                     if let Some(state) = &tti_state {
                         state.touch(&key_owned, default_ttl);
                     }
-                    let res_val = Python::attach(|py| entry.value.clone_ref(py));
-                    let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                    complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+                    let res_val = Python::attach(|py| {
+                        let val = entry.value.clone_ref(py);
+                        complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                        val
+                    });
                     return Ok((Some(res_val), false, true));
                 }
 
@@ -193,9 +195,11 @@ impl Core {
                     state.touch(&key_owned, default_ttl);
                 }
 
-                let res_val = Python::attach(|py| entry.value.clone_ref(py));
-                let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+                let res_val = Python::attach(|py| {
+                    let val = entry.value.clone_ref(py);
+                    complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                    val
+                });
                 Ok((Some(res_val), false, true))
             })
         })
@@ -256,9 +260,11 @@ impl Core {
                 if let Some(state) = &tti_state {
                     state.touch(&key_owned, default_ttl);
                 }
-                let res_val = Python::attach(|py| entry.value.clone_ref(py));
-                let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+                let res_val = Python::attach(|py| {
+                    let val = entry.value.clone_ref(py);
+                    complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                    val
+                });
                 return Ok((Some(res_val), false, true));
             }
 
@@ -298,9 +304,11 @@ impl Core {
                 state.touch(&key_owned, default_ttl);
             }
 
-            let res_val = Python::attach(|py| entry.value.clone_ref(py));
-            let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-            complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+            let res_val = Python::attach(|py| {
+                let val = entry.value.clone_ref(py);
+                complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                val
+            });
             Ok((Some(res_val), false, true))
         })
     }
