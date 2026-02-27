@@ -33,7 +33,7 @@ Invalidate at the entity level; don't be too generic nor too specific:
 ### Memory Growth
 **Symptom**: Process consumes increasing amounts of RAM.
 - The Trie stores tag versions indefinitely unless pruned.
-- Enable automatic pruning: `configure(auto_prune_secs=3600, auto_prune_interval=600)`.
+- Enable automatic pruning: `configure(auto_prune_secs=3600, auto_prune_interval=3600)`.
 
 ### Nodes Out of Sync
 **Symptom**: One server returns one value and another server returns another.

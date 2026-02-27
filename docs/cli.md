@@ -12,12 +12,20 @@ uv add "zoocache[cli]"
 
 ## Running
 
-To start the visual interface:
+To start the visual interface, you need a Redis URL to connect to your ZooCache instance:
 
 ```bash
+# Using command line argument
+zoocache cli --redis redis://localhost:6379
+
+# Or using environment variable
+export REDIS_URL=redis://localhost:6379
 zoocache cli
+
+# Alternative alias
+zoocache dashboard --redis redis://localhost:6379
 ```
-*(Or `uv run zoocache cli` if not in your PATH)*
+*(Or `uv run zoocache cli --redis redis://localhost:6379` if not in your PATH)*
 
 ![ZooCache CLI](assets/cli.gif){ width="830" style="display: block; margin: 0 auto;" }
 

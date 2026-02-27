@@ -25,7 +25,7 @@ In the diagram above, if we invalidate `org:acme`, we bump its version. Any cach
 ## Tag Syntax Rules
 
 To ensure the reliability of the invalidation bus and prevent parsing ambiguities, Zoocache enforces strict rules for tag characters:
-- **Allowed Characters**: Alphanumeric (`a-z`, `A-Z`, `0-9`), underscores (`_`), and colons (`:`).
+- **Allowed Characters**: Alphanumeric (`a-z`, `A-Z`, `0-9`), underscores (`_`), colons (`:`), and periods (`.`).
 - **Forbidden**: Any other symbol, including spaces and the pipe character (`|`).
 - **Enforcement**: Providing an invalid tag to `invalidate()` or `set()` (via dependencies) will raise a `zoocache.InvalidTag` exception.
 

@@ -197,4 +197,4 @@ invalidate("django.model:myapp.product")
 ```
 
 ### Large Cache Size
-If your cache grows too large, ensure you have configured `prune_after` in your global ZooCache configuration.
+If your cache grows too large, ensure you have configured `auto_prune_secs` in your global ZooCache configuration.

@@ -94,8 +94,14 @@ uv add "zoocache[fastapi]"
 # Django integration
 uv add "zoocache[django]"
 
-# All extras
-uv add "zoocache[cli,fastapi,django]"
+# Litestar integration
+uv add "zoocache[litestar]"
+
+# All integrations
+uv add "zoocache[cli,fastapi,django,litestar]"
+
+# Full telemetry (Prometheus + OpenTelemetry)
+uv add "zoocache[telemetry]"
 ```
 
 ---

@@ -63,35 +63,6 @@ configure(
 
 > **Recommendation**: For most production deployments, use **LMDB** for storage (high performance) with **Redis** for the bus (distributed invalidation).
 
-```python
-# Memory only (development)
-configure()
-
-# Redis storage + Redis bus (distributed - recommended)
-configure(
-    storage_url="redis://localhost:6379",
-    bus_url="redis://localhost:6379",
-)
-
-# LMDB storage + Redis bus (high-performance distributed - best for production)
-configure(
-    storage_url="lmdb:///tmp/zoocache",
-    bus_url="redis://localhost:6379",
-    prefix="myapp_prod",
-)
-```
-
-```python
-# Memory (default)
-configure()
-
-# Redis
-configure(storage_url="redis://localhost:6379")
-
-# LMDB
-configure(storage_url="lmdb:///tmp/zoocache")
-```
-
 [→ See full storage configuration](configuration/storage.md)
 
 ---
@@ -99,7 +70,7 @@ configure(storage_url="lmdb:///tmp/zoocache")
 ## Your First Cached Function
 
 ```python
-from zoocache import cacheable, invalidate, configure
+from zoocache import cacheable, invalidate, configure, add_deps
 
 # Configure first!
 configure()
