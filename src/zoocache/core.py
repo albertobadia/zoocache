@@ -237,30 +237,20 @@ def cacheable(
                     _manager.telemetry.increment("cache_hits_total")
                 return val
 
-            while True:
-                fut = _register_flight_signal(key)
-
-                if _manager.telemetry.enabled:
-                    with _manager.telemetry.time_operation("cache_get_duration_seconds"):
-                        val, is_leader, is_hit = await core.get_or_entry_async(key)
-                else:
+            if _manager.telemetry.enabled:
+                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
                     val, is_leader, is_hit = await core.get_or_entry_async(key)
+            else:
+                val, is_leader, is_hit = await core.get_or_entry_async(key)
 
-                if is_hit:
-                    _unregister_flight_signal(key, fut)
-                    _resolve_flight_signals(key)
-                    if _manager.telemetry.enabled:
-                        _manager.telemetry.increment("cache_hits_total")
-                    return val
+            if is_hit:
+                if _manager.telemetry.enabled:
+                    _manager.telemetry.increment("cache_hits_total")
+                return val
 
+            if is_leader:
                 if _manager.telemetry.enabled:
                     _manager.telemetry.increment("cache_misses_total")
-
-                if is_leader:
-                    _unregister_flight_signal(key, fut)
-                    break
-
-                await _wait_for_leader(fut)
 
             success = False
             res = None

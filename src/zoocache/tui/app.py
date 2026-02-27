@@ -123,7 +123,6 @@ class ZooCacheCLI(App):
 
                 active_node_ids.add(f"node-{node_id}")
 
-            # Remove dead nodes
             for card in self.nodes_list.query(".node-card"):
                 if card.id not in active_node_ids:
                     card.remove()
