@@ -91,7 +91,7 @@ impl SyncStorage for LmdbStorage {
             .map_err(Self::to_storage_is_full_err)?;
 
             if let Some(t) = ttl {
-                let expire_at = now_s + t;
+                let expire_at = now_s.saturating_add(t);
                 txn.put(dbs.1, &key, &expire_at.to_le_bytes(), WriteFlags::empty())
                     .map_err(Self::to_storage_is_full_err)?;
             }
@@ -407,7 +407,7 @@ impl LmdbStorage {
         .map_err(Self::to_storage_is_full_err)?;
 
         if let Some(t) = ttl {
-            let expire_at = now_secs() + t;
+            let expire_at = now_secs().saturating_add(t);
             txn.put(dbs.1, &key, &expire_at.to_le_bytes(), WriteFlags::empty())
                 .map_err(Self::to_storage_is_full_err)?;
         } else {

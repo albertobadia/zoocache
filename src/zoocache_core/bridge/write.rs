@@ -179,8 +179,10 @@ impl Core {
     }
 
     pub(crate) fn bridge_flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {
-        if let Some(state) = &self.tti_state {
-            let _ = state.tx.try_send(WorkerMsg::FlushMetrics(metrics));
+        if let Some(state) = &self.tti_state
+            && let Err(e) = state.tx.try_send(WorkerMsg::FlushMetrics(metrics))
+        {
+            log::warn!("Failed to send FlushMetrics: {}", e);
         }
         Ok(())
     }

@@ -100,7 +100,7 @@ impl Storage for RedisStorage {
         };
 
         let expires_at = if pttl > 0 {
-            Some(now_secs() + (pttl as u64 / 1000))
+            Some(now_secs().saturating_add(pttl as u64 / 1000))
         } else {
             None
         };
@@ -299,7 +299,7 @@ impl Storage for RedisStorage {
                                     .to_string();
 
                                 let expires_at = if pttl > 0 {
-                                    Some(now_secs() + (pttl as u64 / 1000))
+                                    Some(now_secs().saturating_add(pttl as u64 / 1000))
                                 } else {
                                     None
                                 };

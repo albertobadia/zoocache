@@ -19,7 +19,7 @@ impl InMemoryStorage {
     }
 
     fn set_internal(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
-        let expires_at = ttl.map(|t| now_secs() + t);
+        let expires_at = ttl.map(|t| now_secs().saturating_add(t));
         let last_accessed = now_secs();
         self.map.insert(key, (entry, expires_at, last_accessed));
         Ok(())
@@ -54,7 +54,7 @@ impl SyncStorage for InMemoryStorage {
         for (key, ttl) in updates {
             if let Some(mut entry) = self.map.get_mut(&key) {
                 if let Some(t) = ttl {
-                    entry.1 = Some(now_secs() + t);
+                    entry.1 = Some(now_secs().saturating_add(t));
                 }
                 entry.2 = now_secs();
             }
