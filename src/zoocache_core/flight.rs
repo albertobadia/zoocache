@@ -86,22 +86,16 @@ pub(crate) fn cleanup_stale_flights(
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let mut removed = 0;
 
-    let to_remove: Vec<String> = flights
-        .iter()
-        .filter_map(|entry| {
-            let flight = entry.value();
+    for entry in flights.iter() {
+        let key = entry.key().clone();
+        let flight = entry.value();
+
+        let should_remove = {
             let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.0 == FlightStatus::Pending && flight.created_at.elapsed() > timeout
+        };
 
-            if state.0 == FlightStatus::Pending && flight.created_at.elapsed() > timeout {
-                Some(entry.key().clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    for key in to_remove {
-        if let Some((_, flight)) = flights.remove(&key) {
+        if should_remove && let Some((_, flight)) = flights.remove(&key) {
             let mut state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
             state.0 = FlightStatus::Error;
             flight.notify.notify_waiters();

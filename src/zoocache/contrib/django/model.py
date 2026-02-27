@@ -215,8 +215,8 @@ def _invalidate_m2m(instance, **kwargs):
     def _do_invalidate():
         core = _manager.get_core()
         core.invalidate(model_tag(instance.__class__))
-        if model_val := kwargs.get("model"):
-            core.invalidate(model_tag(model_val))
+        if sender := kwargs.get("sender"):
+            core.invalidate(model_tag(sender))
 
     transaction.on_commit(_do_invalidate)
 

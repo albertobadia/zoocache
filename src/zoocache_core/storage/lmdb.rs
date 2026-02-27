@@ -374,7 +374,7 @@ impl LmdbStorage {
                 }
             }
         }
-        Ok(())
+        unreachable!("put_internal loop should always return")
     }
 
     fn try_put_once(&self, key: &str, data: &[u8], ttl: Option<u64>) -> PyResult<()> {

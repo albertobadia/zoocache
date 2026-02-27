@@ -64,12 +64,12 @@ pub(crate) fn spawn_worker(
             let silent_errors = Arc::clone(&silent_errors);
             let rx = rx.clone();
 
-            let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create runtime");
 
+            let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 rt.block_on(async move {
                     let mut sys = sysinfo::System::new_all();
                     let mut local_metrics: HashMap<String, f64> = Default::default();
