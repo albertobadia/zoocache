@@ -91,16 +91,16 @@ pub(crate) fn cleanup_stale_flights(
             == FlightStatus::Pending
             && flight.created_at.elapsed() > timeout;
 
-        if should_remove && let Some((_, rm_flight)) = flights.remove(&key) {
-            if FlightStatus::from_u8(rm_flight.state.load(Ordering::Acquire))
+        if should_remove
+            && let Some((_, rm_flight)) = flights.remove(&key)
+            && FlightStatus::from_u8(rm_flight.state.load(Ordering::Acquire))
                 == FlightStatus::Pending
-            {
-                rm_flight
-                    .state
-                    .store(FlightStatus::Error as u8, Ordering::Release);
-                rm_flight.notify.notify_waiters();
-                removed += 1;
-            }
+        {
+            rm_flight
+                .state
+                .store(FlightStatus::Error as u8, Ordering::Release);
+            rm_flight.notify.notify_waiters();
+            removed += 1;
         }
     }
 
