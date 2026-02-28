@@ -1,20 +1,29 @@
 use crate::utils::FastDashMap as DashMap;
-use pyo3::prelude::*;
-use pyo3::types::PyAny;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Instant;
 use tokio::sync::Notify;
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub(crate) enum FlightStatus {
-    #[default]
-    Pending,
-    Done,
-    Error,
+    Pending = 0,
+    Done = 1,
+    Error = 2,
+}
+
+impl FlightStatus {
+    fn from_u8(val: u8) -> Self {
+        match val {
+            1 => FlightStatus::Done,
+            2 => FlightStatus::Error,
+            _ => FlightStatus::Pending,
+        }
+    }
 }
 
 pub(crate) struct Flight {
-    pub state: Mutex<(FlightStatus, Option<Py<PyAny>>)>,
+    pub state: AtomicU8,
     pub notify: Notify,
     pub created_at: Instant,
 }
@@ -32,7 +41,7 @@ pub(crate) fn try_enter_flight(
     let flight = flights.entry(key.to_string()).or_insert_with(|| {
         is_leader = true;
         Arc::new(Flight {
-            state: Mutex::new((FlightStatus::Pending, None)),
+            state: AtomicU8::new(FlightStatus::Pending as u8),
             notify: Notify::new(),
             created_at: Instant::now(),
         })
@@ -40,41 +49,29 @@ pub(crate) fn try_enter_flight(
     (Arc::clone(flight.value()), is_leader)
 }
 
-pub(crate) fn complete_flight(
-    flights: &DashMap<String, Arc<Flight>>,
-    key: &str,
-    is_error: bool,
-    value: Option<Py<PyAny>>,
-) {
+pub(crate) fn complete_flight(flights: &DashMap<String, Arc<Flight>>, key: &str, is_error: bool) {
     if let Some((_, flight)) = flights.remove(key) {
-        let mut state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.0 = if is_error {
-            FlightStatus::Error
+        let status = if is_error {
+            FlightStatus::Error as u8
         } else {
-            FlightStatus::Done
+            FlightStatus::Done as u8
         };
-        state.1 = value;
+        flight.state.store(status, Ordering::Release);
         flight.notify.notify_waiters();
     }
 }
 
 pub(crate) async fn wait_for_flight(flight: &Arc<Flight>, timeout_secs: u64) -> FlightStatus {
     let timeout = std::time::Duration::from_secs(timeout_secs);
-
     let wait_fut = flight.notify.notified();
 
-    {
-        let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.0 != FlightStatus::Pending {
-            return state.0;
-        }
+    let state = FlightStatus::from_u8(flight.state.load(Ordering::Acquire));
+    if state != FlightStatus::Pending {
+        return state;
     }
 
     match tokio::time::timeout(timeout, wait_fut).await {
-        Ok(_) => {
-            let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.0
-        }
+        Ok(_) => FlightStatus::from_u8(flight.state.load(Ordering::Acquire)),
         Err(_) => FlightStatus::Error,
     }
 }
@@ -90,16 +87,20 @@ pub(crate) fn cleanup_stale_flights(
         let key = entry.key().clone();
         let flight = entry.value();
 
-        let should_remove = {
-            let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.0 == FlightStatus::Pending && flight.created_at.elapsed() > timeout
-        };
+        let should_remove = FlightStatus::from_u8(flight.state.load(Ordering::Relaxed))
+            == FlightStatus::Pending
+            && flight.created_at.elapsed() > timeout;
 
-        if should_remove && let Some((_, flight)) = flights.remove(&key) {
-            let mut state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.0 = FlightStatus::Error;
-            flight.notify.notify_waiters();
-            removed += 1;
+        if should_remove && let Some((_, rm_flight)) = flights.remove(&key) {
+            if FlightStatus::from_u8(rm_flight.state.load(Ordering::Acquire))
+                == FlightStatus::Pending
+            {
+                rm_flight
+                    .state
+                    .store(FlightStatus::Error as u8, Ordering::Release);
+                rm_flight.notify.notify_waiters();
+                removed += 1;
+            }
         }
     }
 

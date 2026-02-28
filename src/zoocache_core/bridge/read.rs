@@ -123,9 +123,14 @@ impl Core {
                     let status = wait_for_flight(&flight, flight_timeout).await;
                     return match status {
                         crate::flight::FlightStatus::Done => {
-                            let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
                             let val = Python::attach(|inner_py| {
-                                state.1.as_ref().map(|obj| obj.clone_ref(inner_py))
+                                if let Ok(Some(cached_val)) =
+                                    self.bridge_get_sync(inner_py, &key_owned)
+                                {
+                                    Some(cached_val)
+                                } else {
+                                    None
+                                }
                             });
                             Ok((val, false, true))
                         }
@@ -169,7 +174,7 @@ impl Core {
                     }
                     let res_val = Python::attach(|py| {
                         let val = entry.value.clone_ref(py);
-                        complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                        complete_flight(&flights, &key_owned, false);
                         val
                     });
                     return Ok((Some(res_val), false, true));
@@ -221,7 +226,7 @@ impl Core {
 
                 let res_val = Python::attach(|py| {
                     let val = entry.value.clone_ref(py);
-                    complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                    complete_flight(&flights, &key_owned, false);
                     val
                 });
                 Ok((Some(res_val), false, true))
@@ -248,9 +253,14 @@ impl Core {
                 let status = wait_for_flight(&flight, _flight_timeout).await;
                 return match status {
                     FlightStatus::Done => {
-                        let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
                         let val = Python::attach(|inner_py| {
-                            state.1.as_ref().map(|obj| obj.clone_ref(inner_py))
+                            if let Some(crate::storage::StorageResult::Hit(e, _, _)) =
+                                storage.try_get_sync(inner_py, &key_owned)
+                            {
+                                Some(e.value.clone_ref(inner_py))
+                            } else {
+                                None
+                            }
                         });
                         Ok((val, false, true))
                     }
@@ -288,7 +298,7 @@ impl Core {
                 }
                 let res_val = Python::attach(|py| {
                     let val = entry.value.clone_ref(py);
-                    complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                    complete_flight(&flights, &key_owned, false);
                     val
                 });
                 return Ok((Some(res_val), false, true));
@@ -336,7 +346,7 @@ impl Core {
 
             let res_val = Python::attach(|py| {
                 let val = entry.value.clone_ref(py);
-                complete_flight(&flights, &key_owned, false, Some(val.clone_ref(py)));
+                complete_flight(&flights, &key_owned, false);
                 val
             });
             Ok((Some(res_val), false, true))

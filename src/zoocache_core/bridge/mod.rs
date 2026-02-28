@@ -174,8 +174,8 @@ impl Core {
 
 // Internal helper for finish_flight to avoid circular reliance on bridge name
 impl Core {
-    fn complete_flight(&self, key: &str, is_error: bool, value: Option<Py<PyAny>>) {
-        crate::flight::complete_flight(&self.flights, key, is_error, value);
+    fn complete_flight(&self, key: &str, is_error: bool, _value: Option<Py<PyAny>>) {
+        crate::flight::complete_flight(&self.flights, key, is_error);
     }
 }
 

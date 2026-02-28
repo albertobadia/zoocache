@@ -3,25 +3,32 @@ use crate::utils::now_secs;
 use dashmap::DashMap;
 use pyo3::prelude::*;
 use rand::seq::IteratorRandom;
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::sync::{Arc, RwLock};
 
 use super::{CacheEntry, Storage};
 
 pub(crate) struct InMemoryStorage {
     map: DashMap<String, (Arc<CacheEntry>, Option<u64>, u64)>,
+    keys_index: RwLock<BTreeSet<String>>,
 }
 
 impl InMemoryStorage {
     pub fn new() -> Self {
         Self {
             map: DashMap::new(),
+            keys_index: RwLock::new(BTreeSet::new()),
         }
     }
 
     fn set_internal(&self, key: String, entry: Arc<CacheEntry>, ttl: Option<u64>) -> PyResult<()> {
         let expires_at = ttl.map(|t| now_secs().saturating_add(t));
         let last_accessed = now_secs();
-        self.map.insert(key, (entry, expires_at, last_accessed));
+        self.map
+            .insert(key.clone(), (entry, expires_at, last_accessed));
+
+        let mut index = self.keys_index.write().unwrap();
+        index.insert(key);
         Ok(())
     }
 }
@@ -38,6 +45,8 @@ impl SyncStorage for InMemoryStorage {
         if expires_at.is_some_and(|expires| now_secs() > expires) {
             drop(entry);
             self.map.remove(key);
+            let mut index = self.keys_index.write().unwrap();
+            index.remove(key);
             return super::StorageResult::Expired;
         }
 
@@ -64,12 +73,17 @@ impl SyncStorage for InMemoryStorage {
 
     #[inline]
     fn remove(&self, key: &str) -> PyResult<()> {
-        self.map.remove(key);
+        if self.map.remove(key).is_some() {
+            let mut index = self.keys_index.write().unwrap();
+            index.remove(key);
+        }
         Ok(())
     }
 
     fn clear(&self) -> PyResult<()> {
         self.map.clear();
+        let mut index = self.keys_index.write().unwrap();
+        index.clear();
         Ok(())
     }
 
@@ -103,8 +117,10 @@ impl SyncStorage for InMemoryStorage {
 
         let to_evict: Vec<String> = oldest_items.into_iter().map(|(k, _)| k).collect();
 
+        let mut index = self.keys_index.write().unwrap();
         for key in &to_evict {
             self.map.remove(key);
+            index.remove(key);
         }
 
         Ok(to_evict)
@@ -112,9 +128,14 @@ impl SyncStorage for InMemoryStorage {
 
     fn scan_keys(&self, prefix: &str) -> Vec<(String, Option<u64>)> {
         let mut results = Vec::new();
-        for entry in self.map.iter() {
-            let key = entry.key();
-            if key.starts_with(prefix) {
+        let index = self.keys_index.read().unwrap();
+
+        let it = index.range(prefix.to_string()..);
+        for key in it {
+            if !key.starts_with(prefix) {
+                break;
+            }
+            if let Some(entry) = self.map.get(key) {
                 let (_, expires_at, _) = entry.value();
                 let is_expired = expires_at.is_some_and(|expires| now_secs() > expires);
                 if !is_expired {
