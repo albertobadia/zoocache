@@ -83,26 +83,24 @@ pub(crate) fn cleanup_stale_flights(
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let mut removed = 0;
 
-    for entry in flights.iter() {
-        let key = entry.key().clone();
-        let flight = entry.value();
-
+    flights.retain(|_, flight| {
         let should_remove = FlightStatus::from_u8(flight.state.load(Ordering::Relaxed))
             == FlightStatus::Pending
             && flight.created_at.elapsed() > timeout;
 
         if should_remove
-            && let Some((_, rm_flight)) = flights.remove(&key)
-            && FlightStatus::from_u8(rm_flight.state.load(Ordering::Acquire))
-                == FlightStatus::Pending
+            && FlightStatus::from_u8(flight.state.load(Ordering::Acquire)) == FlightStatus::Pending
         {
-            rm_flight
+            flight
                 .state
                 .store(FlightStatus::Error as u8, Ordering::Release);
-            rm_flight.notify.notify_waiters();
+            flight.notify.notify_waiters();
             removed += 1;
+            false // remove from map
+        } else {
+            true // keep in map
         }
-    }
+    });
 
     removed
 }

@@ -101,9 +101,22 @@ impl SyncStorage for InMemoryStorage {
         let mut oldest_items: Vec<(String, u64)> = Vec::with_capacity(count);
         let mut rng = rand::rng();
 
-        for entry in self.map.iter().sample(&mut rng, sample_size) {
-            let key = entry.key().clone();
-            let ts = entry.value().2;
+        let sample_keys: Vec<String> = {
+            let index = self.keys_index.read().unwrap();
+            index
+                .iter()
+                .sample(&mut rng, sample_size)
+                .into_iter()
+                .cloned()
+                .collect()
+        };
+
+        for key in sample_keys {
+            let ts = if let Some(entry) = self.map.get(&key) {
+                entry.value().2
+            } else {
+                continue;
+            };
 
             if oldest_items.len() < count {
                 oldest_items.push((key, ts));
@@ -130,7 +143,10 @@ impl SyncStorage for InMemoryStorage {
         let mut results = Vec::new();
         let index = self.keys_index.read().unwrap();
 
-        let it = index.range(prefix.to_string()..);
+        let it = index.range::<str, _>((
+            std::ops::Bound::Included(prefix),
+            std::ops::Bound::Unbounded,
+        ));
         for key in it {
             if !key.starts_with(prefix) {
                 break;
