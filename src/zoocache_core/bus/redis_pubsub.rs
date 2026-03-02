@@ -146,14 +146,21 @@ impl RedisPubSubBus {
 
 #[async_trait]
 impl InvalidateBus for RedisPubSubBus {
-    async fn publish(&self, tag: &str, version: u64) {
-        if let Ok(mut conn) = self.get_conn().await {
-            let payload = format!("{}|{}", tag, version);
-            let res: Result<(), redis::RedisError> = conn.publish(&self.channel, payload).await;
-            if res.is_err() {
-                self.clear_conn().await;
-            }
-        }
+    async fn publish(
+        &self,
+        tag: &str,
+        version: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut conn = self
+            .get_conn()
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let payload = format!("{}|{}", tag, version);
+        let _: usize = conn
+            .publish(&self.channel, payload)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        Ok(())
     }
 
     async fn push_heartbeat(&self, node_id: &str, payload: &str, ttl: u64) -> pyo3::PyResult<()> {

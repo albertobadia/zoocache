@@ -13,7 +13,7 @@ mod write;
 impl Core {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (node_id=None, storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30, compression_threshold=256))]
+    #[pyo3(signature = (node_id=None, storage_url=None, bus_url=None, prefix=None, default_ttl=None, read_extend_ttl=true, max_entries=None, lmdb_map_size=None, flight_timeout=60, tti_flush_secs=30, auto_prune_secs=3600, auto_prune_interval=3600, lru_update_interval=30, compression_threshold=256, channel_capacity=1000000, batch_size=1000, lru_cache_size=10000))]
     fn new(
         node_id: Option<&str>,
         storage_url: Option<&str>,
@@ -29,6 +29,9 @@ impl Core {
         auto_prune_interval: Option<u64>,
         lru_update_interval: u64,
         compression_threshold: usize,
+        channel_capacity: usize,
+        batch_size: usize,
+        lru_cache_size: usize,
     ) -> PyResult<Self> {
         Self::bridge_new(
             node_id,
@@ -45,6 +48,9 @@ impl Core {
             auto_prune_interval,
             lru_update_interval,
             compression_threshold,
+            channel_capacity,
+            batch_size,
+            lru_cache_size,
         )
     }
 
@@ -72,8 +78,8 @@ impl Core {
         self.bridge_get_or_entry_async(py, key)
     }
 
-    fn finish_flight(&self, _py: Python, key: &str, is_error: bool, value: Option<Py<PyAny>>) {
-        self.complete_flight(key, is_error, value);
+    fn finish_flight(&self, _py: Python, key: &str, is_error: bool) {
+        self.complete_flight(key, is_error);
     }
 
     fn get<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Py<PyAny>>> {
@@ -174,7 +180,7 @@ impl Core {
 
 // Internal helper for finish_flight to avoid circular reliance on bridge name
 impl Core {
-    fn complete_flight(&self, key: &str, is_error: bool, _value: Option<Py<PyAny>>) {
+    fn complete_flight(&self, key: &str, is_error: bool) {
         crate::flight::complete_flight(&self.flights, key, is_error);
     }
 }

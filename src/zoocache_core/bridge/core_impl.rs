@@ -26,6 +26,9 @@ impl Core {
         auto_prune_interval: Option<u64>,
         lru_update_interval: u64,
         compression_threshold: usize,
+        channel_capacity: usize,
+        batch_size: usize,
+        lru_cache_size: usize,
     ) -> PyResult<Self> {
         set_compression_threshold(compression_threshold);
         let storage: Arc<dyn crate::storage::Storage> = match storage_url {
@@ -147,6 +150,9 @@ impl Core {
                 bus_is_remote,
                 lru_update_interval,
                 flight_timeout_val,
+                channel_capacity,
+                batch_size,
+                lru_cache_size,
             );
             tti_state = Some(Arc::new(TtiState {
                 tx,

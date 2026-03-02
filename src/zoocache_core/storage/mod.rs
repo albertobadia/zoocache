@@ -160,6 +160,11 @@ impl CacheEntry {
     }
 }
 
+/// Storage result semantics are standardized across all backends:
+/// - Hit: Key exists and has a valid, non-expired value
+/// - Expired: Key existed but has expired (TTL reached)
+/// - NotFound: Key does not exist in storage
+/// - Error: Storage-level failure (connection error, permission denied, etc.)
 pub(crate) enum StorageResult {
     Hit(Arc<CacheEntry>, Option<u64>, Option<Vec<u8>>),
     Expired,

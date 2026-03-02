@@ -6,6 +6,72 @@ use pyo3::prelude::*;
 use std::sync::Arc;
 
 impl Core {
+    fn validate_entry_sync<'py>(
+        &self,
+        py: Python<'py>,
+        key: &str,
+        entry: Arc<crate::storage::CacheEntry>,
+        expires_at: Option<u64>,
+        raw_data: Option<Vec<u8>>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let current_global_version = self.trie.get_global_version();
+        let now = utils::now_secs();
+
+        if entry.trie_version == current_global_version {
+            if self.storage.needs_tti_worker() && self.storage.check_and_update_touch_gate() {
+                self.tti_touch(key, self.default_ttl);
+            }
+            return Ok(Some(entry.value.clone_ref(py)));
+        }
+
+        let valid = crate::trie::validate_dependencies(&self.trie, &entry.dependencies, now);
+        if !valid {
+            if let Err(e) = self.storage.try_remove_sync(key) {
+                log::warn!("Failed to remove invalid key '{}': {}", key, e);
+            }
+            if let Some(state) = &self.tti_state
+                && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key.to_string()))
+            {
+                log::warn!("Failed to send Delete for invalid key '{}': {}", key, e);
+            }
+            return Ok(None);
+        }
+
+        if entry.trie_version < current_global_version {
+            if let Some(state) = &self.tti_state {
+                if let Some(raw) = raw_data {
+                    if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
+                        &raw,
+                        current_global_version,
+                    ) && let Err(e) = state.tx.try_send(WorkerMsg::Update(
+                        key.to_string(),
+                        data,
+                        expires_at.map(|e| e.saturating_sub(now)),
+                    )) {
+                        log::warn!("Failed to send Update for key '{}': {}", key, e);
+                    }
+                } else {
+                    let updated_entry = Arc::new(crate::storage::CacheEntry {
+                        value: entry.value.clone_ref(py),
+                        dependencies: Arc::clone(&entry.dependencies),
+                        trie_version: current_global_version,
+                    });
+                    if let Err(e) = state.tx.try_send(WorkerMsg::UpdateEntry(
+                        key.to_string(),
+                        updated_entry,
+                        expires_at.map(|e| e.saturating_sub(now)),
+                    )) {
+                        log::warn!("Failed to send UpdateEntry for key '{}': {}", key, e);
+                    }
+                }
+            }
+        } else {
+            self.tti_touch(key, self.default_ttl);
+        }
+
+        Ok(Some(entry.value.clone_ref(py)))
+    }
+
     pub(crate) fn bridge_get_sync<'py>(
         &self,
         py: Python<'py>,
@@ -30,61 +96,7 @@ impl Core {
             None => return Ok(None),
         };
 
-        let current_global_version = self.trie.get_global_version();
-        if entry.trie_version == current_global_version {
-            if self.storage.needs_tti_worker() && self.storage.check_and_update_touch_gate() {
-                self.tti_touch(key, self.default_ttl);
-            }
-            return Ok(Some(entry.value.clone_ref(py)));
-        }
-
-        let valid =
-            crate::trie::validate_dependencies(&self.trie, &entry.dependencies, utils::now_secs());
-        if !valid {
-            if let Err(e) = self.storage.try_remove_sync(key) {
-                log::warn!("Failed to remove invalid key '{}': {}", key, e);
-            }
-            if let Some(state) = &self.tti_state
-                && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key.to_string()))
-            {
-                log::warn!("Failed to send Delete for invalid key '{}': {}", key, e);
-            }
-            return Ok(None);
-        }
-
-        if entry.trie_version < current_global_version {
-            if let Some(state) = &self.tti_state {
-                if let Some(raw) = raw_data {
-                    if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
-                        &raw,
-                        current_global_version,
-                    ) && let Err(e) = state.tx.try_send(WorkerMsg::Update(
-                        key.to_string(),
-                        data,
-                        expires_at.map(|e| e.saturating_sub(utils::now_secs())),
-                    )) {
-                        log::warn!("Failed to send Update for key '{}': {}", key, e);
-                    }
-                } else {
-                    let updated_entry = Arc::new(crate::storage::CacheEntry {
-                        value: entry.value.clone_ref(py),
-                        dependencies: Arc::clone(&entry.dependencies),
-                        trie_version: current_global_version,
-                    });
-                    if let Err(e) = state.tx.try_send(WorkerMsg::UpdateEntry(
-                        key.to_string(),
-                        updated_entry,
-                        expires_at.map(|e| e.saturating_sub(utils::now_secs())),
-                    )) {
-                        log::warn!("Failed to send UpdateEntry for key '{}': {}", key, e);
-                    }
-                }
-            }
-        } else {
-            self.tti_touch(key, self.default_ttl);
-        }
-
-        Ok(Some(entry.value.clone_ref(py)))
+        self.validate_entry_sync(py, key, entry, expires_at, raw_data)
     }
 
     pub(crate) fn bridge_get_or_entry_sync<'py>(

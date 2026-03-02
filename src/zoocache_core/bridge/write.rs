@@ -6,6 +6,7 @@ use crate::{RUNTIME, utils};
 use foldhash::HashMap;
 use pyo3::prelude::*;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 impl Core {
     pub(crate) fn bridge_set(
@@ -158,9 +159,13 @@ impl Core {
 
         if self.bus_is_remote {
             let bus = Arc::clone(&self.bus);
+            let silent_errors = Arc::clone(&self.silent_errors);
             py.detach(|| {
                 RUNTIME.spawn(async move {
-                    bus.publish(&tag, new_ver).await;
+                    if let Err(e) = bus.publish(&tag, new_ver).await {
+                        silent_errors.fetch_add(1, Ordering::Relaxed);
+                        log::warn!("Failed to publish invalidation for tag '{}': {}", tag, e);
+                    }
                 });
             });
         }
@@ -175,10 +180,18 @@ impl Core {
         super::utils::validate_tag(&tag)?;
         let new_ver = self.trie.invalidate(&tag);
         let bus = Arc::clone(&self.bus);
+        let silent_errors = Arc::clone(&self.silent_errors);
         let tag_clone = tag.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            bus.publish(&tag_clone, new_ver).await;
+            if let Err(e) = bus.publish(&tag_clone, new_ver).await {
+                silent_errors.fetch_add(1, Ordering::Relaxed);
+                log::warn!(
+                    "Failed to publish invalidation for tag '{}': {}",
+                    tag_clone,
+                    e
+                );
+            }
             Ok(Python::attach(|py| py.None()))
         })
     }
