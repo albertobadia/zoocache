@@ -34,6 +34,13 @@ def test_tag_validation_simple():
     with pytest.raises(InvalidTag, match="Tag length exceeded"):
         invalidate("a" * 257)
 
+    with pytest.raises(InvalidTag, match="consecutive separators"):
+        invalidate("tag::double")
+    with pytest.raises(InvalidTag, match="consecutive separators"):
+        invalidate("tag..double")
+    with pytest.raises(InvalidTag, match="consecutive separators"):
+        invalidate("tag.:mixed")
+
     # Mixed valid chars
     invalidate("tag.sub:sub_2")
 

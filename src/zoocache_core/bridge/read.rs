@@ -1,31 +1,22 @@
 use crate::core::Core;
-use crate::flight::{complete_flight, try_enter_flight, wait_for_flight};
+use crate::flight::{FlightStatus, complete_flight, try_enter_flight, wait_for_flight};
 use crate::worker::WorkerMsg;
 use crate::{RUNTIME, utils};
 use pyo3::prelude::*;
 use std::sync::Arc;
 
 impl Core {
-    pub(crate) fn bridge_get_sync<'py>(
+    fn validate_entry_sync<'py>(
         &self,
         py: Python<'py>,
         key: &str,
+        entry: Arc<crate::storage::CacheEntry>,
+        expires_at: Option<u64>,
+        raw_data: Option<Vec<u8>>,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let status = self.storage.try_get_sync(py, key);
-        let (entry, expires_at, raw_data) = match status {
-            Some(crate::storage::StorageResult::Hit(e, exp, raw)) => (e, exp, raw),
-            Some(crate::storage::StorageResult::Expired) => {
-                let _ = self.storage.try_remove_sync(key);
-                if let Some(state) = &self.tti_state {
-                    let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
-                }
-                return Ok(None);
-            }
-            Some(crate::storage::StorageResult::NotFound) => return Ok(None),
-            None => return Ok(None),
-        };
-
         let current_global_version = self.trie.get_global_version();
+        let now = utils::now_secs();
+
         if entry.trie_version == current_global_version {
             if self.storage.needs_tti_worker() && self.storage.check_and_update_touch_gate() {
                 self.tti_touch(key, self.default_ttl);
@@ -33,12 +24,15 @@ impl Core {
             return Ok(Some(entry.value.clone_ref(py)));
         }
 
-        let valid =
-            crate::trie::validate_dependencies(&self.trie, &entry.dependencies, utils::now_secs());
+        let valid = crate::trie::validate_dependencies(&self.trie, &entry.dependencies, now);
         if !valid {
-            let _ = self.storage.try_remove_sync(key);
-            if let Some(state) = &self.tti_state {
-                let _ = state.tx.try_send(WorkerMsg::Delete(key.to_string()));
+            if let Err(e) = self.storage.try_remove_sync(key) {
+                log::warn!("Failed to remove invalid key '{}': {}", key, e);
+            }
+            if let Some(state) = &self.tti_state
+                && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key.to_string()))
+            {
+                log::warn!("Failed to send Delete for invalid key '{}': {}", key, e);
             }
             return Ok(None);
         }
@@ -49,12 +43,12 @@ impl Core {
                     if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
                         &raw,
                         current_global_version,
-                    ) {
-                        let _ = state.tx.try_send(WorkerMsg::Update(
-                            key.to_string(),
-                            data,
-                            expires_at.map(|e| e.saturating_sub(utils::now_secs())),
-                        ));
+                    ) && let Err(e) = state.tx.try_send(WorkerMsg::Update(
+                        key.to_string(),
+                        data,
+                        expires_at.map(|e| e.saturating_sub(now)),
+                    )) {
+                        log::warn!("Failed to send Update for key '{}': {}", key, e);
                     }
                 } else {
                     let updated_entry = Arc::new(crate::storage::CacheEntry {
@@ -62,11 +56,13 @@ impl Core {
                         dependencies: Arc::clone(&entry.dependencies),
                         trie_version: current_global_version,
                     });
-                    let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                    if let Err(e) = state.tx.try_send(WorkerMsg::UpdateEntry(
                         key.to_string(),
                         updated_entry,
-                        expires_at.map(|e| e.saturating_sub(utils::now_secs())),
-                    ));
+                        expires_at.map(|e| e.saturating_sub(now)),
+                    )) {
+                        log::warn!("Failed to send UpdateEntry for key '{}': {}", key, e);
+                    }
                 }
             }
         } else {
@@ -74,6 +70,33 @@ impl Core {
         }
 
         Ok(Some(entry.value.clone_ref(py)))
+    }
+
+    pub(crate) fn bridge_get_sync<'py>(
+        &self,
+        py: Python<'py>,
+        key: &str,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let status = self.storage.try_get_sync(py, key);
+        let (entry, expires_at, raw_data) = match status {
+            Some(crate::storage::StorageResult::Hit(e, exp, raw)) => (e, exp, raw),
+            Some(crate::storage::StorageResult::Expired) => {
+                if let Err(e) = self.storage.try_remove_sync(key) {
+                    log::warn!("Failed to remove expired key '{}': {}", key, e);
+                }
+                if let Some(state) = &self.tti_state
+                    && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key.to_string()))
+                {
+                    log::warn!("Failed to send Delete for expired key '{}': {}", key, e);
+                }
+                return Ok(None);
+            }
+            Some(crate::storage::StorageResult::NotFound) => return Ok(None),
+            Some(crate::storage::StorageResult::Error) => return Ok(None),
+            None => return Ok(None),
+        };
+
+        self.validate_entry_sync(py, key, entry, expires_at, raw_data)
     }
 
     pub(crate) fn bridge_get_or_entry_sync<'py>(
@@ -92,8 +115,9 @@ impl Core {
         py: Python<'py>,
         key: &str,
     ) -> PyResult<(Option<Py<PyAny>>, bool, bool)> {
-        if let Ok(res @ (Some(_), false, true)) = self.bridge_get_or_entry_sync(py, key) {
-            return Ok(res);
+        let res = self.bridge_get_or_entry_sync(py, key);
+        if res.as_ref().is_ok_and(|r| r.2) {
+            return res;
         }
 
         let storage = Arc::clone(&self.storage);
@@ -111,9 +135,14 @@ impl Core {
                     let status = wait_for_flight(&flight, flight_timeout).await;
                     return match status {
                         crate::flight::FlightStatus::Done => {
-                            let state = flight.state.lock().unwrap_or_else(|e| e.into_inner());
                             let val = Python::attach(|inner_py| {
-                                state.1.as_ref().map(|obj| obj.clone_ref(inner_py))
+                                if let Ok(Some(cached_val)) =
+                                    self.bridge_get_sync(inner_py, &key_owned)
+                                {
+                                    Some(cached_val)
+                                } else {
+                                    None
+                                }
                             });
                             Ok((val, false, true))
                         }
@@ -130,12 +159,21 @@ impl Core {
                 let (entry, expires_at, raw_data) = match status {
                     crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     crate::storage::StorageResult::Expired => {
-                        if let Some(state) = &tti_state {
-                            let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
+                        if let Some(state) = &tti_state
+                            && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()))
+                        {
+                            log::warn!(
+                                "Failed to send Delete for expired key '{}': {}",
+                                key_owned,
+                                e
+                            );
                         }
                         return Ok((None, true, false));
                     }
                     crate::storage::StorageResult::NotFound => {
+                        return Ok((None, true, false));
+                    }
+                    crate::storage::StorageResult::Error => {
                         return Ok((None, true, false));
                     }
                 };
@@ -146,15 +184,19 @@ impl Core {
                     if let Some(state) = &tti_state {
                         state.touch(&key_owned, default_ttl);
                     }
-                    let res_val = Python::attach(|py| entry.value.clone_ref(py));
-                    let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                    complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+                    let res_val = Python::attach(|py| {
+                        let val = entry.value.clone_ref(py);
+                        complete_flight(&flights, &key_owned, false);
+                        val
+                    });
                     return Ok((Some(res_val), false, true));
                 }
 
                 let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
                 if !valid {
-                    let _ = storage.remove(&key_owned).await;
+                    if let Err(e) = storage.remove(&key_owned).await {
+                        log::warn!("Failed to remove invalid key '{}': {}", key_owned, e);
+                    }
                     return Ok((None, true, false));
                 }
 
@@ -164,12 +206,12 @@ impl Core {
                             if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
                                 &raw,
                                 current_global_version,
-                            ) {
-                                let _ = state.tx.try_send(WorkerMsg::Update(
-                                    key_owned.clone(),
-                                    data,
-                                    expires_at.map(|e| e.saturating_sub(now)),
-                                ));
+                            ) && let Err(e) = state.tx.try_send(WorkerMsg::Update(
+                                key_owned.clone(),
+                                data,
+                                expires_at.map(|e| e.saturating_sub(now)),
+                            )) {
+                                log::warn!("Failed to send Update for key '{}': {}", key_owned, e);
                             }
                         } else {
                             let updated_entry = Arc::new(crate::storage::CacheEntry {
@@ -177,20 +219,28 @@ impl Core {
                                 dependencies: Arc::clone(&entry.dependencies),
                                 trie_version: current_global_version,
                             });
-                            let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                            if let Err(e) = state.tx.try_send(WorkerMsg::UpdateEntry(
                                 key_owned.clone(),
                                 updated_entry,
                                 expires_at.map(|e| e.saturating_sub(now)),
-                            ));
+                            )) {
+                                log::warn!(
+                                    "Failed to send UpdateEntry for key '{}': {}",
+                                    key_owned,
+                                    e
+                                );
+                            }
                         }
                     }
                 } else if let Some(state) = &tti_state {
                     state.touch(&key_owned, default_ttl);
                 }
 
-                let res_val = Python::attach(|py| entry.value.clone_ref(py));
-                let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+                let res_val = Python::attach(|py| {
+                    let val = entry.value.clone_ref(py);
+                    complete_flight(&flights, &key_owned, false);
+                    val
+                });
                 Ok((Some(res_val), false, true))
             })
         })
@@ -210,21 +260,44 @@ impl Core {
         let key_owned = key.to_string();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (_flight, is_leader) = try_enter_flight(&flights, &key_owned);
+            let (flight, is_leader) = try_enter_flight(&flights, &key_owned);
             if !is_leader {
-                return Ok((None, false, false));
+                let status = wait_for_flight(&flight, _flight_timeout).await;
+                return match status {
+                    FlightStatus::Done => {
+                        let val = Python::attach(|inner_py| {
+                            if let Some(crate::storage::StorageResult::Hit(e, _, _)) =
+                                storage.try_get_sync(inner_py, &key_owned)
+                            {
+                                Some(e.value.clone_ref(inner_py))
+                            } else {
+                                None
+                            }
+                        });
+                        Ok((val, false, true))
+                    }
+                    FlightStatus::Error => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "Thundering herd leader failed",
+                    )),
+                    _ => Ok((None, false, false)),
+                };
             }
 
             let status = storage.get(&key_owned).await;
             let (entry, expires_at, raw_data) = match status {
                 crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                 crate::storage::StorageResult::Expired => {
-                    if let Some(state) = &tti_state {
-                        let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
+                    if let Some(state) = &tti_state
+                        && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()))
+                    {
+                        log::warn!("Failed to send Delete for key '{}': {}", key_owned, e);
                     }
                     return Ok((None, true, false));
                 }
                 crate::storage::StorageResult::NotFound => {
+                    return Ok((None, true, false));
+                }
+                crate::storage::StorageResult::Error => {
                     return Ok((None, true, false));
                 }
             };
@@ -235,15 +308,19 @@ impl Core {
                 if let Some(state) = &tti_state {
                     state.touch(&key_owned, default_ttl);
                 }
-                let res_val = Python::attach(|py| entry.value.clone_ref(py));
-                let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-                complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+                let res_val = Python::attach(|py| {
+                    let val = entry.value.clone_ref(py);
+                    complete_flight(&flights, &key_owned, false);
+                    val
+                });
                 return Ok((Some(res_val), false, true));
             }
 
             let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
             if !valid {
-                let _ = storage.remove(&key_owned).await;
+                if let Err(e) = storage.remove(&key_owned).await {
+                    log::warn!("Failed to remove invalid key '{}': {}", key_owned, e);
+                }
                 return Ok((None, true, false));
             }
 
@@ -253,12 +330,12 @@ impl Core {
                         if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
                             &raw,
                             current_global_version,
-                        ) {
-                            let _ = state.tx.try_send(WorkerMsg::Update(
-                                key_owned.clone(),
-                                data,
-                                expires_at.map(|e| e.saturating_sub(now)),
-                            ));
+                        ) && let Err(e) = state.tx.try_send(WorkerMsg::Update(
+                            key_owned.clone(),
+                            data,
+                            expires_at.map(|e| e.saturating_sub(now)),
+                        )) {
+                            log::warn!("Failed to send Update for key '{}': {}", key_owned, e);
                         }
                     } else {
                         let updated_entry = Arc::new(crate::storage::CacheEntry {
@@ -266,20 +343,24 @@ impl Core {
                             dependencies: Arc::clone(&entry.dependencies),
                             trie_version: current_global_version,
                         });
-                        let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                        if let Err(e) = state.tx.try_send(WorkerMsg::UpdateEntry(
                             key_owned.clone(),
                             updated_entry,
                             expires_at.map(|e| e.saturating_sub(now)),
-                        ));
+                        )) {
+                            log::warn!("Failed to send UpdateEntry for key '{}': {}", key_owned, e);
+                        }
                     }
                 }
             } else if let Some(state) = &tti_state {
                 state.touch(&key_owned, default_ttl);
             }
 
-            let res_val = Python::attach(|py| entry.value.clone_ref(py));
-            let res_val_clone = Python::attach(|py| res_val.clone_ref(py));
-            complete_flight(&flights, &key_owned, false, Some(res_val_clone));
+            let res_val = Python::attach(|py| {
+                let val = entry.value.clone_ref(py);
+                complete_flight(&flights, &key_owned, false);
+                val
+            });
             Ok((Some(res_val), false, true))
         })
     }
@@ -289,8 +370,9 @@ impl Core {
         py: Python<'py>,
         key: &str,
     ) -> PyResult<Option<Py<PyAny>>> {
-        if let Ok(Some(val)) = self.bridge_get_sync(py, key) {
-            return Ok(Some(val));
+        let res = self.bridge_get_sync(py, key);
+        if self.storage.is_sync_storage() || res.as_ref().is_ok_and(|v| v.is_some()) {
+            return res;
         }
 
         let storage = Arc::clone(&self.storage);
@@ -305,12 +387,15 @@ impl Core {
                 let (entry, expires_at, raw_data) = match status {
                     crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                     crate::storage::StorageResult::Expired => {
-                        if let Some(state) = &tti_state {
-                            let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
+                        if let Some(state) = &tti_state
+                            && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()))
+                        {
+                            log::warn!("Failed to send Delete for key '{}': {}", key_owned, e);
                         }
                         return Ok(None);
                     }
                     crate::storage::StorageResult::NotFound => return Ok(None),
+                    crate::storage::StorageResult::Error => return Ok(None),
                 };
 
                 let current_global_version = trie.get_global_version();
@@ -324,7 +409,9 @@ impl Core {
 
                 let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
                 if !valid {
-                    let _ = storage.remove(&key_owned).await;
+                    if let Err(e) = storage.remove(&key_owned).await {
+                        log::warn!("Failed to remove invalid key '{}': {}", key_owned, e);
+                    }
                     return Ok(None);
                 }
 
@@ -334,12 +421,12 @@ impl Core {
                             if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
                                 &raw,
                                 current_global_version,
-                            ) {
-                                let _ = state.tx.try_send(WorkerMsg::Update(
-                                    key_owned.clone(),
-                                    data,
-                                    expires_at.map(|e| e.saturating_sub(now)),
-                                ));
+                            ) && let Err(e) = state.tx.try_send(WorkerMsg::Update(
+                                key_owned.clone(),
+                                data,
+                                expires_at.map(|e| e.saturating_sub(now)),
+                            )) {
+                                log::warn!("Failed to send Update for key '{}': {}", key_owned, e);
                             }
                         } else {
                             let updated_entry = Arc::new(crate::storage::CacheEntry {
@@ -347,11 +434,17 @@ impl Core {
                                 dependencies: Arc::clone(&entry.dependencies),
                                 trie_version: current_global_version,
                             });
-                            let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                            if let Err(e) = state.tx.try_send(WorkerMsg::UpdateEntry(
                                 key_owned.clone(),
                                 updated_entry,
                                 expires_at.map(|e| e.saturating_sub(now)),
-                            ));
+                            )) {
+                                log::warn!(
+                                    "Failed to send UpdateEntry for key '{}': {}",
+                                    key_owned,
+                                    e
+                                );
+                            }
                         }
                     }
                 } else if let Some(state) = &tti_state {
@@ -379,12 +472,15 @@ impl Core {
             let (entry, expires_at, raw_data) = match status {
                 crate::storage::StorageResult::Hit(e, exp, raw) => (e, exp, raw),
                 crate::storage::StorageResult::Expired => {
-                    if let Some(state) = &tti_state {
-                        let _ = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()));
+                    if let Some(state) = &tti_state
+                        && let Err(e) = state.tx.try_send(WorkerMsg::Delete(key_owned.clone()))
+                    {
+                        log::warn!("Failed to send Delete for key '{}': {}", key_owned, e);
                     }
                     return Ok(None);
                 }
                 crate::storage::StorageResult::NotFound => return Ok(None),
+                crate::storage::StorageResult::Error => return Ok(None),
             };
 
             let current_global_version = trie.get_global_version();
@@ -398,7 +494,9 @@ impl Core {
 
             let valid = crate::trie::validate_dependencies(&trie, &entry.dependencies, now);
             if !valid {
-                let _ = storage.remove(&key_owned).await;
+                if let Err(e) = storage.remove(&key_owned).await {
+                    log::warn!("Failed to remove invalid key '{}': {}", key_owned, e);
+                }
                 return Ok(None);
             }
 
@@ -408,12 +506,12 @@ impl Core {
                         if let Ok(data) = crate::storage::CacheEntry::update_trie_version_raw(
                             &raw,
                             current_global_version,
-                        ) {
-                            let _ = state.tx.try_send(WorkerMsg::Update(
-                                key_owned.clone(),
-                                data,
-                                expires_at.map(|e| e.saturating_sub(now)),
-                            ));
+                        ) && let Err(e) = state.tx.try_send(WorkerMsg::Update(
+                            key_owned.clone(),
+                            data,
+                            expires_at.map(|e| e.saturating_sub(now)),
+                        )) {
+                            log::warn!("Failed to send Update for key '{}': {}", key_owned, e);
                         }
                     } else {
                         let updated_entry = Arc::new(crate::storage::CacheEntry {
@@ -421,11 +519,13 @@ impl Core {
                             dependencies: Arc::clone(&entry.dependencies),
                             trie_version: current_global_version,
                         });
-                        let _ = state.tx.try_send(WorkerMsg::UpdateEntry(
+                        if let Err(e) = state.tx.try_send(WorkerMsg::UpdateEntry(
                             key_owned.clone(),
                             updated_entry,
                             expires_at.map(|e| e.saturating_sub(now)),
-                        ));
+                        )) {
+                            log::warn!("Failed to send UpdateEntry for key '{}': {}", key_owned, e);
+                        }
                     }
                 }
             } else if let Some(state) = &tti_state {

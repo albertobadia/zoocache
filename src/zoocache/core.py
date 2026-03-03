@@ -94,6 +94,9 @@ def configure(
     auto_prune_secs: int | None = None,
     auto_prune_interval: int = 3600,
     lru_update_interval: int = 30,
+    channel_capacity: int = 1_000_000,
+    batch_size: int = 1000,
+    lru_cache_size: int = 10_000,
     telemetry: TelemetryManager | None = None,
 ) -> None:
     if telemetry is None and bus_url and bus_url.startswith("redis://"):
@@ -115,6 +118,9 @@ def configure(
         auto_prune_secs=auto_prune_secs,
         auto_prune_interval=auto_prune_interval,
         lru_update_interval=lru_update_interval,
+        channel_capacity=channel_capacity,
+        batch_size=batch_size,
+        lru_cache_size=lru_cache_size,
         telemetry=telemetry,
     )
 
@@ -237,30 +243,20 @@ def cacheable(
                     _manager.telemetry.increment("cache_hits_total")
                 return val
 
-            while True:
-                fut = _register_flight_signal(key)
-
-                if _manager.telemetry.enabled:
-                    with _manager.telemetry.time_operation("cache_get_duration_seconds"):
-                        val, is_leader, is_hit = await core.get_or_entry_async(key)
-                else:
+            if _manager.telemetry.enabled:
+                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
                     val, is_leader, is_hit = await core.get_or_entry_async(key)
+            else:
+                val, is_leader, is_hit = await core.get_or_entry_async(key)
 
-                if is_hit:
-                    _unregister_flight_signal(key, fut)
-                    _resolve_flight_signals(key)
-                    if _manager.telemetry.enabled:
-                        _manager.telemetry.increment("cache_hits_total")
-                    return val
+            if is_hit:
+                if _manager.telemetry.enabled:
+                    _manager.telemetry.increment("cache_hits_total")
+                return val
 
+            if is_leader:
                 if _manager.telemetry.enabled:
                     _manager.telemetry.increment("cache_misses_total")
-
-                if is_leader:
-                    _unregister_flight_signal(key, fut)
-                    break
-
-                await _wait_for_leader(fut)
 
             success = False
             res = None
@@ -280,7 +276,7 @@ def cacheable(
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 raise
             finally:
-                core.finish_flight(key, not success, res if success else None)
+                core.finish_flight(key, not success)
                 _resolve_flight_signals(key, exception)
 
         @functools.wraps(fn)
@@ -321,7 +317,7 @@ def cacheable(
                 _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
                 raise
             finally:
-                core.finish_flight(key, not success, res if success else None)
+                core.finish_flight(key, not success)
                 _resolve_flight_signals(key)
 
         return async_wrapper if inspect.iscoroutinefunction(fn) else sync_wrapper

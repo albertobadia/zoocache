@@ -20,6 +20,18 @@ thread_local! {
 
 use crate::trie::DepSnapshot;
 use crate::utils::to_runtime_err;
+use std::sync::OnceLock;
+
+static COMPRESSION_THRESHOLD: OnceLock<usize> = OnceLock::new();
+
+pub(crate) fn set_compression_threshold(threshold: usize) {
+    let _ = COMPRESSION_THRESHOLD.set(threshold);
+}
+
+#[inline]
+fn get_compression_threshold() -> usize {
+    *COMPRESSION_THRESHOLD.get_or_init(|| 256)
+}
 
 #[derive(Serialize, Deserialize)]
 struct SerializableCacheEntry {
@@ -35,6 +47,7 @@ pub(crate) struct CacheEntry {
 }
 
 const MAGIC_HEADER: &[u8] = b"ZOO2";
+const MAGIC_HEADER_UNCOMPRESSED: &[u8] = b"ZOO3";
 const MAGIC_LEN: usize = 4;
 const VERSION_LEN: usize = 8;
 const HEADER_LEN: usize = MAGIC_LEN + VERSION_LEN;
@@ -57,19 +70,36 @@ impl CacheEntry {
             };
 
             let packed = rmp_serde::to_vec(&entry).map_err(to_runtime_err)?;
-            let compressed = compress_prepend_size(&packed);
-
-            let mut final_data = Vec::with_capacity(HEADER_LEN + compressed.len());
-            final_data.extend_from_slice(MAGIC_HEADER);
-            final_data.extend_from_slice(&self.trie_version.to_le_bytes());
-            final_data.extend_from_slice(&compressed);
+            let threshold = get_compression_threshold();
+            let final_data = if packed.len() < threshold {
+                let mut data = Vec::with_capacity(HEADER_LEN + 4 + packed.len());
+                data.extend_from_slice(MAGIC_HEADER_UNCOMPRESSED);
+                data.extend_from_slice(&self.trie_version.to_le_bytes());
+                data.extend_from_slice(&(packed.len() as u32).to_le_bytes());
+                data.extend_from_slice(&packed);
+                data
+            } else {
+                let compressed = compress_prepend_size(&packed);
+                let mut data = Vec::with_capacity(HEADER_LEN + compressed.len());
+                data.extend_from_slice(MAGIC_HEADER);
+                data.extend_from_slice(&self.trie_version.to_le_bytes());
+                data.extend_from_slice(&compressed);
+                data
+            };
 
             Ok(final_data)
         })
     }
 
     pub fn deserialize(py: Python, data: &[u8]) -> PyResult<Self> {
-        if data.len() < HEADER_LEN || &data[..MAGIC_LEN] != MAGIC_HEADER {
+        if data.len() < HEADER_LEN {
+            return Err(to_runtime_err(
+                "Invalid cache file format or version mismatch",
+            ));
+        }
+
+        let is_compressed = &data[..MAGIC_LEN] == MAGIC_HEADER;
+        if !is_compressed && &data[..MAGIC_LEN] != MAGIC_HEADER_UNCOMPRESSED {
             return Err(to_runtime_err(
                 "Invalid cache file format or version mismatch",
             ));
@@ -82,7 +112,22 @@ impl CacheEntry {
         );
 
         let payload = &data[HEADER_LEN..];
-        let decompressed = decompress_size_prepended(payload).map_err(to_runtime_err)?;
+        let decompressed = if is_compressed {
+            decompress_size_prepended(payload).map_err(to_runtime_err)?
+        } else {
+            if payload.len() < 4 {
+                return Err(to_runtime_err("Invalid uncompressed data format"));
+            }
+            let size = u32::from_le_bytes(
+                payload[..4]
+                    .try_into()
+                    .map_err(|_| to_runtime_err("Invalid size"))?,
+            ) as usize;
+            if payload.len() < 4 + size {
+                return Err(to_runtime_err("Truncated uncompressed data"));
+            }
+            payload[4..4 + size].to_vec()
+        };
         let entry: SerializableCacheEntry =
             rmp_serde::from_slice(&decompressed).map_err(to_runtime_err)?;
 
@@ -100,7 +145,12 @@ impl CacheEntry {
     }
 
     pub fn update_trie_version_raw(data: &[u8], new_version: u64) -> PyResult<Vec<u8>> {
-        if data.len() < HEADER_LEN || &data[..MAGIC_LEN] != MAGIC_HEADER {
+        if data.len() < HEADER_LEN {
+            return Err(to_runtime_err("Invalid format"));
+        }
+
+        let is_compressed = &data[..MAGIC_LEN] == MAGIC_HEADER;
+        if !is_compressed && &data[..MAGIC_LEN] != MAGIC_HEADER_UNCOMPRESSED {
             return Err(to_runtime_err("Invalid format"));
         }
 
@@ -110,10 +160,16 @@ impl CacheEntry {
     }
 }
 
+/// Storage result semantics are standardized across all backends:
+/// - Hit: Key exists and has a valid, non-expired value
+/// - Expired: Key existed but has expired (TTL reached)
+/// - NotFound: Key does not exist in storage
+/// - Error: Storage-level failure (connection error, permission denied, etc.)
 pub(crate) enum StorageResult {
     Hit(Arc<CacheEntry>, Option<u64>, Option<Vec<u8>>),
     Expired,
     NotFound,
+    Error,
 }
 
 use async_trait::async_trait;

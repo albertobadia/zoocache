@@ -1,0 +1,67 @@
+name: PR Changelog
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}:${{ github.event.pull_request.base.ref }}
+
+      - name: Generate Changelog
+        id: git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --unreleased --strip header ${{ github.event.pull_request.base.ref }}..HEAD
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Read Changelog Content
+        if: github.event_name == 'pull_request'
+        id: read-changelog
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            echo "content<<EOF" >> $GITHUB_OUTPUT
+            cat CHANGELOG.md >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "content=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Find Comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/find-comment@v3
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-includes: "<!-- pr-changelog -->"
+
+      - name: Post Changelog Comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## 📝 Changelog
+
+            <!-- pr-changelog -->
+            ${{ steps.read-changelog.outputs.content }}
+          edit-mode: ${{ steps.find-comment.outputs.comment-id != '' && 'replace' || 'create' }}

@@ -14,11 +14,15 @@ uv add "zoocache[telemetry-prometheus]"
 
 | Metric Name | Type | Description |
 |-------------|------|-------------|
-| `zoocache_hits_total` | Counter | Total number of cache hits. |
-| `zoocache_misses_total` | Counter | Total number of cache misses. |
-| `zoocache_latency_seconds` | Histogram | Latency of cache operations (read/write). |
-| `zoocache_trie_nodes_count` | Gauge | Current number of nodes in the PrefixTrie. |
-| `zoocache_bus_messages_total` | Counter | Number of messages sent/received via the Redis bus. |
+| `cache_hits_total` | Counter | Total number of cache hits. |
+| `cache_misses_total` | Counter | Total number of cache misses. |
+| `cache_errors_total` | Counter | Total number of cache errors. |
+| `cache_invalidations_total` | Counter | Total number of cache invalidations. |
+| `cache_get_duration_seconds` | Histogram | Latency of cache get operations. |
+| `cache_set_duration_seconds` | Histogram | Latency of cache set operations. |
+| `singleflight_timeouts_total` | Counter | Total number of singleflight (anti-avalanche) timeouts. |
+| `cache_tti_overflows_total` | Counter | Total number of TTI message overflows. |
+| `cache_silent_errors_total` | Counter | Total number of silent errors in distributed mode. |
 
 ## Integration Examples
 

@@ -8,7 +8,11 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub(crate) trait InvalidateBus: Send + Sync {
-    async fn publish(&self, tag: &str, version: u64);
+    async fn publish(
+        &self,
+        tag: &str,
+        version: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     async fn push_heartbeat(
         &self,
         _node_id: &str,

@@ -62,7 +62,7 @@ impl RedisPubSubBus {
     pub fn start_listener<F, I>(&self, invalidate_cb: F, inspect_cb: I)
     where
         F: Fn(&str, u64) + Send + Sync + 'static,
-        I: Fn(&str, &str) -> Option<String> + Send + Sync + 'static,
+        I: Fn(&str, &str, Client, String) + Send + Sync + 'static,
     {
         let client = self.client.clone();
         let channel = self.channel.clone();
@@ -124,13 +124,12 @@ impl RedisPubSubBus {
                             let prefix_str = prefix.trim();
                             let req_id_str = req_id.trim();
 
-                            if let Some(reply_json) = inspect_cb(prefix_str, req_id_str)
-                                && let Ok(mut reply_conn) =
-                                    client.get_multiplexed_async_connection().await
-                            {
-                                let _: Result<(), redis::RedisError> =
-                                    reply_conn.publish(&inspect_reply_channel, reply_json).await;
-                            }
+                            inspect_cb(
+                                prefix_str,
+                                req_id_str,
+                                client.clone(),
+                                inspect_reply_channel.clone(),
+                            );
                         }
                     } else if let Some((tag, ver_str)) = payload.rsplit_once('|')
                         && let Ok(ver) = ver_str.trim().parse::<u64>()
@@ -147,14 +146,21 @@ impl RedisPubSubBus {
 
 #[async_trait]
 impl InvalidateBus for RedisPubSubBus {
-    async fn publish(&self, tag: &str, version: u64) {
-        if let Ok(mut conn) = self.get_conn().await {
-            let payload = format!("{}|{}", tag, version);
-            let res: Result<(), redis::RedisError> = conn.publish(&self.channel, payload).await;
-            if res.is_err() {
-                self.clear_conn().await;
-            }
-        }
+    async fn publish(
+        &self,
+        tag: &str,
+        version: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut conn = self
+            .get_conn()
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let payload = format!("{}|{}", tag, version);
+        let _: usize = conn
+            .publish(&self.channel, payload)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        Ok(())
     }
 
     async fn push_heartbeat(&self, node_id: &str, payload: &str, ttl: u64) -> pyo3::PyResult<()> {

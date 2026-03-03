@@ -73,7 +73,10 @@ impl Storage for RedisStorage {
     async fn get(&self, key: &str) -> StorageResult {
         let mut conn = match self.get_conn().await {
             Ok(c) => c,
-            Err(_) => return StorageResult::NotFound,
+            Err(e) => {
+                log::warn!("Redis connection failed for key '{}': {}", key, e);
+                return StorageResult::Error;
+            }
         };
 
         let now = now_secs() as f64;
@@ -97,7 +100,7 @@ impl Storage for RedisStorage {
         };
 
         let expires_at = if pttl > 0 {
-            Some(now_secs() + (pttl as u64 / 1000))
+            Some(now_secs().saturating_add(pttl as u64 / 1000))
         } else {
             None
         };
@@ -105,6 +108,7 @@ impl Storage for RedisStorage {
         match Python::attach(|py| CacheEntry::deserialize(py, &data).ok().map(Arc::new)) {
             Some(entry) => StorageResult::Hit(entry, expires_at, Some(data)),
             None => {
+                ::log::error!("Cache deserialization failed for key '{}'", key);
                 let _: () = redis::pipe()
                     .del(self.full_key(key))
                     .zrem(self.lru_key(), key)
@@ -295,7 +299,7 @@ impl Storage for RedisStorage {
                                     .to_string();
 
                                 let expires_at = if pttl > 0 {
-                                    Some(now_secs() + (pttl as u64 / 1000))
+                                    Some(now_secs().saturating_add(pttl as u64 / 1000))
                                 } else {
                                     None
                                 };

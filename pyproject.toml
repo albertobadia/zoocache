@@ -14,27 +14,27 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-django = ["django>=5.2.11"]
+django = ["django>=4.2"]
 telemetry-prometheus = ["prometheus-client>=0.20.0"]
 telemetry-otel = [
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp>=1.20.0",
+    "opentelemetry-api>=1.0.0",
+    "opentelemetry-sdk>=1.0.0",
+    "opentelemetry-exporter-otlp>=1.0.0",
 ]
 telemetry = [
     "prometheus-client>=0.20.0",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp>=1.20.0",
+    "opentelemetry-api>=1.0.0",
+    "opentelemetry-sdk>=1.0.0",
+    "opentelemetry-exporter-otlp>=1.0.0",
 ]
 fastapi = [
-    "fastapi>=0.129.0",
-    "pydantic>=2.12.5",
+    "fastapi>=0.100.0",
+    "pydantic>=2.0",
 ]
 litestar = [
-    "litestar>=2.21.0",
-    "msgspec>=0.18.6",
-    "pydantic>=2.12.5",
+    "litestar>=2.0",
+    "msgspec>=0.18.0",
+    "pydantic>=2.0",
 ]
 cli = [
     "textual>=0.47.0",
@@ -62,18 +62,18 @@ dev = [
     "ruff>=0.14.13",
     "maturin>=1.7",
     "mkdocstrings>=1.0.1",
-    "django>=5.2.11",
+    "django>=4.2",
     "pytest-benchmark>=4.0.0",
     "djangorestframework>=3.16.1",
     "prometheus-client>=0.20.0",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp>=1.20.0",
-    "fastapi>=0.129.0",
-    "pydantic>=2.12.5",
+    "opentelemetry-api>=1.0.0",
+    "opentelemetry-sdk>=1.0.0",
+    "opentelemetry-exporter-otlp>=1.0.0",
+    "fastapi>=0.100.0",
+    "pydantic>=2.0",
     "httpx>=0.28.1",
-    "litestar>=2.21.0",
-    "msgspec>=0.18.6",
+    "litestar>=2.0",
+    "msgspec>=0.18.0",
     "textual>=0.47.0",
     "redis>=5.0.0",
     "textual-plotext>=1.0.1",

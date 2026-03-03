@@ -235,7 +235,7 @@ The `@cache_endpoint` decorator accepts these options:
 |--------|------|---------|-------------|
 | `deps` | `Callable` or `list` | `None` | Dependencies for cache invalidation |
 | `ttl` | `int` | `None` | Time-to-live in seconds |
-| `key_builder` | `Callable` | `None` | Custom function to build cache key |
+| `namespace` | `str` | `None` | Optional namespace prefix for cache keys |
 
 ```python
 @app.get("/items/{item_id}")

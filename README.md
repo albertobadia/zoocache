@@ -53,17 +53,16 @@ Traditional caches use **TTL** (Time To Live), which causes stale data and cache
 | Feature | **🐾 ZooCache** | **🔴 Redis** | **🐶 Dogpile** | **diskcache** |
 |---------|:---------------:|:------------:|:-------------:|:-------------:|
 | **Semantic Invalidation** | ✅ Trie-based | ❌ Manual | ❌ Manual | ❌ TTL only |
-| **Causal Consistency** | ✅ HLC | ❌ Eventual | ❌ No | ❌ No |
-| **Anti-Avalanche** | ✅ Native | ❌ No | ✅ Locks | ❌ No |
-| **Rust-powered** | ✅ Core | ❌ No | ❌ No | ❌ No |
-| **Performance** | 🚀 Ultra-high | 🏎️ High | 🐢 Medium | 🐢 Medium |
+| **Smart Serialization** | ✅ MsgPack+LZ4 | ❌ No | ❌ No | ❌ No |
+| **Distributed Sync** | ✅ Redis Bus | ❌ Pub/Sub | ❌ No | ❌ No |
+| **Observability** | ✅ Full | ❌ Basic | ❌ No | ❌ No |
 
 ---
 
 ## Key Features
 
 - 🧠 **Semantic Invalidation**: Use a `PrefixTrie` for hierarchical invalidation. Clear `"user:*"` to invalidate all keys related to a specific user instantly.
-- 🚀 **Rust-Powered Performance**: Core logic implemented in Rust for ultra-low latency and safe concurrency.
+- 💾 **Flexible Storage Backends**: Choose between in-memory, LMDB for persistence, or Redis for distributed caching.
 - 🛡️ **Causal Consistency**: Built-in support for Hybrid Logical Clocks (HLC) ensures consistency even in distributed systems.
 - ⚡ **Anti-Avalanche (SingleFlight)**: Protects your backend from "thundering herd" effects by coalescing concurrent identical requests.
 - 📦 **Smart Serialization**: Transparently handles MsgPack and LZ4 compression for maximum throughput and minimum storage.
@@ -94,8 +93,14 @@ uv add "zoocache[fastapi]"
 # Django integration
 uv add "zoocache[django]"
 
-# All extras
-uv add "zoocache[cli,fastapi,django]"
+# Litestar integration
+uv add "zoocache[litestar]"
+
+# All integrations
+uv add "zoocache[cli,fastapi,django,litestar]"
+
+# Full telemetry (Prometheus + OpenTelemetry)
+uv add "zoocache[telemetry]"
 ```
 
 ---

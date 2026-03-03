@@ -43,19 +43,6 @@ configure(storage_url="redis://:password@localhost:6379/0")
 
 ---
 
-## 4. S3 / Cloud Storage (Beta)
-ZooCache can use S3 as a cold-storage layer for very large objects that don't fit in Redis or local disk.
-
-- **Best for**: Large binary blobs or infrequent lookups where cost per GB is more important than latency.
-- **Config**: Use `s3://` protocol.
-
-```python
-from zoocache import configure
-configure(storage_url="s3://my-bucket/cache-prefix")
-```
-
----
-
 ## Comparison Table
 
 | Backend | Speed | Persistence | Distributed | Sharing |
@@ -63,4 +50,3 @@ configure(storage_url="s3://my-bucket/cache-prefix")
 | **In-Memory** | ⚡ Extreme | No | No | No |
 | **LMDB** | 🚀 Very High | Yes | No | Multi-process (Local) |
 | **Redis** | 🏎️ High | Yes | Yes | Multi-node |
-| **S3** | 🐢 Low | Yes | Yes | Multi-node |

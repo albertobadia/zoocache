@@ -8,19 +8,12 @@ By using the `@cache_endpoint` decorator, you get the exact same benefits of `zo
 
 The Litestar integration is available as an optional extra.
 
-Using `uv` (recommended):
 ```bash
+# Using uv (recommended)
 uv add "zoocache[litestar]"
-```
 
-Using `pip`:
-```bash
+# Using pip
 pip install "zoocache[litestar]"
-```
-
-Using `uv`:
-```bash
-uv add "zoocache[litestar]"
 ```
 
 ## Quick Start

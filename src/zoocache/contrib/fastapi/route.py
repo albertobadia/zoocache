@@ -60,7 +60,7 @@ def _make_async_wrapper(fn: Callable, namespace: str | None, deps: Callable | It
             _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
             raise
         finally:
-            core.finish_flight(key, not success, to_cache if success else None)
+            core.finish_flight(key, not success)
             _resolve_flight_signals(key)
 
     return async_wrapper
@@ -100,7 +100,7 @@ def _make_sync_wrapper(fn: Callable, namespace: str | None, deps: Callable | Ite
             _manager.telemetry.increment("cache_errors_total", labels={"error_type": "exception"})
             raise
         finally:
-            core.finish_flight(key, not success, to_cache if success else None)
+            core.finish_flight(key, not success)
             _resolve_flight_signals(key)
 
     return sync_wrapper

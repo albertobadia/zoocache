@@ -23,15 +23,25 @@ pub(crate) fn validate_tag(tag: &str) -> PyResult<()> {
     }
 
     let mut depth = 0;
+    let mut last_was_sep = false;
     for &b in bytes {
-        if b == b':' {
-            depth += 1;
-        } else if !b.is_ascii_alphanumeric() && b != b'_' && b != b'.' {
+        let is_sep = b == b':' || b == b'.';
+        if is_sep {
+            if last_was_sep {
+                return Err(InvalidTag::new_err(
+                    "Tag cannot contain consecutive separators (':' or '.')",
+                ));
+            }
+            if b == b':' {
+                depth += 1;
+            }
+        } else if !b.is_ascii_alphanumeric() && b != b'_' {
             return Err(InvalidTag::new_err(format!(
                 "Invalid character '{}' in tag '{}'. Only alphanumeric, '_', ':' and '.' are allowed.",
                 b as char, tag
             )));
         }
+        last_was_sep = is_sep;
     }
 
     if depth > 16 {

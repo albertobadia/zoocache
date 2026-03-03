@@ -68,7 +68,8 @@ configure(
 ### Performance Tuning
 - `lru_update_interval` (int): Frequency in seconds to update the LRU access times in storage. Default: `30`.
 - `lmdb_map_size` (int): Maximum size of the LMDB database in bytes.
-- `serializer` (str): Choose between `msgpack` (default), `json`, or `pickle`.
+- `tti_flush_secs` (int): How often to flush Time-To-Idle updates to storage. Default: `30`.
+- `flight_timeout` (int): Maximum seconds to wait for a SingleFlight leader before giving up. Default: `60`.
 
 ---
 

@@ -50,8 +50,11 @@ pub(crate) fn spawn_worker(
     bus_is_remote: bool,
     lru_update_interval: u64,
     flight_timeout: u64,
+    channel_capacity: usize,
+    batch_size: usize,
+    lru_cache_size: usize,
 ) -> Sender<WorkerMsg> {
-    let (tx, rx) = crossbeam_channel::bounded::<WorkerMsg>(1_000_000);
+    let (tx, rx) = crossbeam_channel::bounded::<WorkerMsg>(channel_capacity);
     let tx_clone = tx.clone();
 
     thread::spawn(move || {
@@ -64,19 +67,20 @@ pub(crate) fn spawn_worker(
             let silent_errors = Arc::clone(&silent_errors);
             let rx = rx.clone();
 
-            let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create runtime");
 
+            let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 rt.block_on(async move {
                     let mut sys = sysinfo::System::new_all();
                     let mut local_metrics: HashMap<String, f64> = Default::default();
                     let mut last_heartbeat = Instant::now();
 
-                    let mut last_touches =
-                        lru::LruCache::<String, Instant>::new(NonZeroUsize::new(10000).unwrap());
+                    let mut last_touches = lru::LruCache::<String, Instant>::new(
+                        NonZeroUsize::new(lru_cache_size).unwrap(),
+                    );
                     let mut batch = HashMap::<String, Option<u64>>::default();
                     let mut last_flush = Instant::now();
                     let mut last_auto_prune = Instant::now();
@@ -97,7 +101,7 @@ pub(crate) fn spawn_worker(
                         if !messages.is_empty() {
                             while let Ok(msg) = rx.try_recv() {
                                 messages.push(msg);
-                                if messages.len() >= 1000 {
+                                if messages.len() >= batch_size {
                                     break;
                                 }
                             }

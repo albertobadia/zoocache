@@ -6,6 +6,7 @@ use crate::{RUNTIME, utils};
 use foldhash::HashMap;
 use pyo3::prelude::*;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 impl Core {
     pub(crate) fn bridge_set(
@@ -31,17 +32,29 @@ impl Core {
         let max_entries = self.max_entries;
         let trie = self.trie.clone();
 
-        if let Ok(()) = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl) {
-            if let Some(max) = max_entries
+        let res = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl);
+        if storage.is_sync_storage() || res.is_ok() {
+            if let Ok(()) = res
+                && let Some(max) = max_entries
                 && let Some(current) = storage.try_len_sync()
                 && current > max
             {
                 let to_evict = current - max + (max / 10).max(1);
-                if let Some(Ok(_evicted)) = storage.try_evict_lru_sync(to_evict) {
-                    trie.prune(0);
-                }
+                let storage_clone = Arc::clone(&storage);
+                let tti_state_clone = self.tti_state.clone();
+                let trie_clone = trie.clone();
+
+                RUNTIME.spawn_blocking(move || {
+                    if let Some(Ok(_evicted)) = storage_clone.try_evict_lru_sync(to_evict) {
+                        if let Some(state) = &tti_state_clone {
+                            let _ = state.tx.try_send(WorkerMsg::Prune(0));
+                        } else {
+                            trie_clone.prune(0);
+                        }
+                    }
+                });
             }
-            return Ok(());
+            return res;
         }
 
         py.detach(|| {
@@ -53,7 +66,11 @@ impl Core {
                     if current > max {
                         let to_evict = current - max + (max / 10).max(1);
                         storage.evict_lru(to_evict).await?;
-                        trie.prune(0);
+                        if let Some(state) = &self.tti_state {
+                            let _ = state.tx.try_send(WorkerMsg::Prune(0));
+                        } else {
+                            trie.prune(0);
+                        }
                     }
                 }
                 Ok(())
@@ -84,31 +101,53 @@ impl Core {
         let max_entries = self.max_entries;
         let trie = self.trie.clone();
 
-        let sync_evict = max_entries.and_then(|max| {
-            storage.try_len_sync().and_then(|current| {
-                if current > max {
-                    let to_evict = current - max + (max / 10).max(1);
-                    storage.try_evict_lru_sync(to_evict)
-                } else {
-                    None
-                }
-            })
-        });
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            storage.set(key, entry, final_ttl).await?;
-
-            if let Some(evicted) = sync_evict {
-                if let Ok(_keys) = evicted {
-                    trie.prune(0);
-                }
-            } else if let Some(max) = max_entries
+        let res = storage.try_set_sync(py, key.clone(), Arc::clone(&entry), final_ttl);
+        if storage.is_sync_storage() || res.is_ok() {
+            if let Ok(()) = res
+                && let Some(max) = max_entries
                 && let Some(current) = storage.try_len_sync()
                 && current > max
             {
                 let to_evict = current - max + (max / 10).max(1);
-                storage.evict_lru(to_evict).await?;
-                trie.prune(0);
+                let storage_clone = Arc::clone(&storage);
+                let tti_state_clone = self.tti_state.clone();
+                let trie_clone = trie.clone();
+
+                RUNTIME.spawn_blocking(move || {
+                    if let Some(Ok(_evicted)) = storage_clone.try_evict_lru_sync(to_evict) {
+                        if let Some(state) = &tti_state_clone {
+                            let _ = state.tx.try_send(WorkerMsg::Prune(0));
+                        } else {
+                            trie_clone.prune(0);
+                        }
+                    }
+                });
+            }
+            return pyo3_async_runtimes::tokio::future_into_py(py, async move {
+                Ok(Python::attach(|py| py.None()))
+            });
+        }
+
+        let tti_state = self.tti_state.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            storage.set(key, entry, final_ttl).await?;
+
+            if let Some(max) = max_entries {
+                let current = storage.len().await;
+                if current > max {
+                    let to_evict = current - max + (max / 10).max(1);
+                    storage.evict_lru(to_evict).await?;
+                    if let Some(state) = &tti_state {
+                        if let Err(e) = state.tx.try_send(WorkerMsg::Prune(0)) {
+                            log::warn!("Failed to cleanly trigger bg prune (slow path): {}", e);
+                            trie.prune(0);
+                        }
+                    } else {
+                        log::warn!("Sync prune fallback taken (slow path).");
+                        trie.prune(0);
+                    }
+                }
             }
             Ok(Python::attach(|py| py.None()))
         })
@@ -120,9 +159,13 @@ impl Core {
 
         if self.bus_is_remote {
             let bus = Arc::clone(&self.bus);
+            let silent_errors = Arc::clone(&self.silent_errors);
             py.detach(|| {
                 RUNTIME.spawn(async move {
-                    bus.publish(&tag, new_ver).await;
+                    if let Err(e) = bus.publish(&tag, new_ver).await {
+                        silent_errors.fetch_add(1, Ordering::Relaxed);
+                        log::warn!("Failed to publish invalidation for tag '{}': {}", tag, e);
+                    }
                 });
             });
         }
@@ -137,10 +180,18 @@ impl Core {
         super::utils::validate_tag(&tag)?;
         let new_ver = self.trie.invalidate(&tag);
         let bus = Arc::clone(&self.bus);
+        let silent_errors = Arc::clone(&self.silent_errors);
         let tag_clone = tag.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            bus.publish(&tag_clone, new_ver).await;
+            if let Err(e) = bus.publish(&tag_clone, new_ver).await {
+                silent_errors.fetch_add(1, Ordering::Relaxed);
+                log::warn!(
+                    "Failed to publish invalidation for tag '{}': {}",
+                    tag_clone,
+                    e
+                );
+            }
             Ok(Python::attach(|py| py.None()))
         })
     }
@@ -149,9 +200,12 @@ impl Core {
         let storage = Arc::clone(&self.storage);
         let trie = self.trie.clone();
 
-        if let Ok(()) = storage.try_clear_sync() {
-            trie.clear();
-            return Ok(());
+        let res = storage.try_clear_sync();
+        if storage.is_sync_storage() || res.is_ok() {
+            if res.is_ok() {
+                trie.clear();
+            }
+            return res;
         }
 
         py.detach(|| {
@@ -174,8 +228,10 @@ impl Core {
     }
 
     pub(crate) fn bridge_flush_metrics(&self, metrics: HashMap<String, f64>) -> PyResult<()> {
-        if let Some(state) = &self.tti_state {
-            let _ = state.tx.try_send(WorkerMsg::FlushMetrics(metrics));
+        if let Some(state) = &self.tti_state
+            && let Err(e) = state.tx.try_send(WorkerMsg::FlushMetrics(metrics))
+        {
+            log::warn!("Failed to send FlushMetrics: {}", e);
         }
         Ok(())
     }

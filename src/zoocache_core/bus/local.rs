@@ -11,5 +11,11 @@ impl LocalBus {
 
 #[async_trait]
 impl InvalidateBus for LocalBus {
-    async fn publish(&self, _tag: &str, _version: u64) {}
+    async fn publish(
+        &self,
+        _tag: &str,
+        _version: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
 }
