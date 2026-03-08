@@ -10,31 +10,25 @@ class CommandHandler:
     def __init__(self, redis_client: redis.Redis, prefix: str):
         self.redis_client = redis_client
         self.prefix = prefix
-        self._handlers: dict[str, Callable[[list[str]], Awaitable[tuple[str, str]]]] = {
+        self._handlers: dict[str, Callable[[list[str], str], Awaitable[tuple[str, str]]]] = {
             "invalidate": self._handle_invalidate,
             "prune": self._handle_prune,
         }
 
     async def execute(self, cmd_str: str) -> tuple[str, str]:
-        """
-        Executes a command and returns a tuple of (summary, details) for logging.
-        """
         parts = cmd_str.split()
         if not parts:
             return ("", "")
 
-        # Default assumption: target is 'all', and the first word is the command
         target = "all"
         command = parts[0].lower()
         args = parts[1:]
 
-        # If the first word is NOT a known command, assume it's a target
         if command not in self._handlers and len(parts) > 1:
             target = parts[0]
             command = parts[1].lower()
             args = parts[2:]
 
-        # Strip colon prefix if the user still types it out of habit
         if command.startswith(":"):
             command = command[1:]
 
@@ -57,7 +51,6 @@ class CommandHandler:
 
         channel = f"{self.prefix}:invalidate" if target == "all" else f"{self.prefix}:node:{target}:invalidate"
 
-        # Rust core expects tag|timestamp (not colon)
         payload = f"{tag}|{int(time.time() * 10)}"
 
         await self.redis_client.publish(channel, payload)

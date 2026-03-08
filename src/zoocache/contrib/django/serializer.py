@@ -11,21 +11,18 @@ try:
 except ImportError:
     models = None
 
-    def model_tag(x):
-        return str(x)
+    def model_tag(model_or_instance):
+        return str(model_or_instance)
 
-    def instance_tag(x):
-        return str(x)
+    def instance_tag(instance):
+        return str(instance)
 
 
 class BaseCacheableSerializerMixin:
-    """Shared logic for single and list serializers."""
-
     _zoo_signals_connected = set()
     _zoo_related_models_cache = {}
 
     def _get_zoo_model(self):
-        """Introspect model from Meta or zoocache_model attribute."""
         if hasattr(self, "Meta") and hasattr(self.Meta, "model"):
             return self.Meta.model
         return getattr(self, "zoocache_model", None)
@@ -75,7 +72,6 @@ class BaseCacheableSerializerMixin:
         post_save.connect(_invalidate_handler, sender=model, dispatch_uid=uid, weak=False)
         post_delete.connect(_invalidate_handler, sender=model, dispatch_uid=uid, weak=False)
 
-        # M2M signals must be connected to the through model
         for field in model._meta.local_many_to_many:
             through = field.remote_field.through
             m2m_changed.connect(
@@ -86,7 +82,6 @@ class BaseCacheableSerializerMixin:
             )
 
     def _setup_caching(self):
-        """One-time setup for this serializer class."""
         if self.__class__ not in self._zoo_signals_connected:
             for model in self._get_related_models():
                 self._connect_signals(model)
@@ -94,16 +89,10 @@ class BaseCacheableSerializerMixin:
 
 
 class CacheableSerializerMixin(BaseCacheableSerializerMixin):
-    """
-    Mixin to add automatic caching to serializers.
-    Designed to be framework-agnostic but compatible with DRF.
-    """
-
     def _get_cache_key(self, instance):
         model = self._get_zoo_model()
         model_label = model_tag(model) if model else "unknown"
         pk = getattr(instance, "pk", id(instance))
-        # Use full class path to avoid collisions
         cls = self.__class__
         class_id = f"{cls.__module__}.{cls.__name__}"
         return f"django.serializer:{class_id}:{model_label}:{pk}"
@@ -128,8 +117,6 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
 
 
 class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
-    """Specialized mixin for ListSerializers to avoid redundant DB queries."""
-
     def to_representation(self, data):
         core = _manager.get_core()
         model = self._get_zoo_model()
@@ -147,7 +134,6 @@ class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
             class_id = f"{cls.__module__}.{cls.__name__}"
             key = f"django.serializer.list:{class_id}:{model_tag(model)}:{fingerprint}"
         except Exception:
-            # Fallback to standard representation if query fails (e.g. empty queryset or complex query)
             return super().to_representation(data)
 
         if (cached := core.get(key)) is not None:
@@ -160,7 +146,6 @@ class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
 
 
 def cacheable_serializer(cls):
-    """Decorator to make a serializer class cacheable."""
     if not issubclass(cls, CacheableSerializerMixin):
         cls = type(cls.__name__, (CacheableSerializerMixin, cls), {})
 

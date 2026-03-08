@@ -50,7 +50,6 @@ class ZooCacheCLI(App):
         self.push_screen(InspectScreen())
 
     async def send_inspect_request(self, key: str, req_id: str) -> None:
-        # Backend expects "key|req_id" and uses rsplit_once('|')
         payload = f"{key}|{req_id}"
         await self.redis_client.publish(f"{self.prefix}:inspect:request", payload)
 

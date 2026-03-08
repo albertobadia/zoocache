@@ -449,14 +449,11 @@ mod tests {
         assert!(version > 0);
 
         let snapshot_v = vec![0, 0, version];
-        // Before prune, it's valid if version matches
         assert!(trie.check_and_catch_up(&["user", "1"], &snapshot_v, now_secs(), false));
 
-        // After force prune, it's still valid because version matches exactly
         trie.force_prune_all();
         assert!(trie.check_and_catch_up(&["user", "1"], &snapshot_v, now_secs(), false));
 
-        // But an older snapshot should now be INVALID because it's < min_pruned_version
         let old_snapshot_v = vec![0, 0, version - 1];
         assert!(!trie.check_and_catch_up(&["user", "1"], &old_snapshot_v, now_secs(), false));
 
