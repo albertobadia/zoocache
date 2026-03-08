@@ -66,6 +66,8 @@ def _raw_to_instance(model, data, db="default"):
     if not data:
         return None
 
+    data = dict(data)
+
     rel_data = data.pop(INTERNAL_CACHE_KEY_RELATED, None)
 
     concrete_fields = {f.attname: f for f in model._meta.concrete_fields}

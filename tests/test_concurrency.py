@@ -77,6 +77,45 @@ def test_sync_thundering_herd_error():
     assert calls["count"] == 2
 
 
+def test_sync_follower_done_without_value_is_not_hit():
+    from zoocache import configure, reset
+    from zoocache.core import _manager
+
+    reset()
+    configure(flight_timeout=2)
+    core = _manager.get_core()
+    key = "manual_flight_without_value"
+
+    leader_entered = threading.Event()
+    release_leader = threading.Event()
+    leader_result = {}
+    follower_result = {}
+
+    def leader():
+        leader_result["value"] = core.get_or_entry(key)
+        leader_entered.set()
+        release_leader.wait(timeout=1.0)
+        core.finish_flight(key, False)
+
+    def follower():
+        leader_entered.wait(timeout=1.0)
+        follower_result["value"] = core.get_or_entry(key)
+
+    leader_thread = threading.Thread(target=leader)
+    follower_thread = threading.Thread(target=follower)
+
+    leader_thread.start()
+    follower_thread.start()
+    time.sleep(0.05)
+    release_leader.set()
+
+    leader_thread.join(timeout=2.0)
+    follower_thread.join(timeout=2.0)
+
+    assert leader_result["value"] == (None, True, False)
+    assert follower_result["value"] == (None, False, False)
+
+
 @pytest.mark.asyncio
 async def test_async_thundering_herd_error():
     calls = {"count": 0}
