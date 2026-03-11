@@ -1,5 +1,6 @@
 import functools
 from hashlib import sha256
+from typing import Any, cast
 
 from zoocache.core import _manager
 
@@ -19,12 +20,13 @@ except ImportError:
 
 
 class BaseCacheableSerializerMixin:
-    _zoo_signals_connected = set()
-    _zoo_related_models_cache = {}
+    _zoo_signals_connected: set[type[Any]] = set()
+    _zoo_related_models_cache: dict[type[Any], set[Any]] = {}
 
     def _get_zoo_model(self):
-        if hasattr(self, "Meta") and hasattr(self.Meta, "model"):
-            return self.Meta.model
+        meta = getattr(self, "Meta", None)
+        if meta is not None and hasattr(meta, "model"):
+            return meta.model
         return getattr(self, "zoocache_model", None)
 
     def _get_related_models(self):
@@ -34,10 +36,11 @@ class BaseCacheableSerializerMixin:
 
         models_found = {base_model} if (base_model := self._get_zoo_model()) else set()
 
-        if hasattr(self, "child"):
-            res = self.child._get_related_models()
-            self._zoo_related_models_cache[cls] = res
-            return res
+        child = getattr(self, "child", None)
+        if child is not None and hasattr(child, "_get_related_models"):
+            related_models = child._get_related_models()
+            self._zoo_related_models_cache[cls] = related_models
+            return related_models
 
         fields = getattr(self, "fields", {}) or getattr(self, "_declared_fields", {})
 
@@ -101,11 +104,12 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
         return f"django.serializer:{class_id}:{model_label}:{pk}"
 
     def to_representation(self, instance):
+        serializer_super = cast(Any, super())
         core = _manager.get_core()
         model = self._get_zoo_model()
 
         if not model or not hasattr(instance, "pk"):
-            return super().to_representation(instance)
+            return serializer_super.to_representation(instance)
 
         self._setup_caching()
 
@@ -113,7 +117,7 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
         if (cached := core.get(key)) is not None:
             return cached
 
-        data = super().to_representation(instance)
+        data = serializer_super.to_representation(instance)
         deps = {instance_tag(instance)} | {model_tag(m) for m in self._get_related_models()}
         core.set(key, data, list(deps))
         return data
@@ -121,11 +125,12 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
 
 class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
     def to_representation(self, data):
+        serializer_super = cast(Any, super())
         core = _manager.get_core()
         model = self._get_zoo_model()
 
         if not model or not hasattr(data, "query"):
-            return super().to_representation(data)
+            return serializer_super.to_representation(data)
 
         self._setup_caching()
 
@@ -137,12 +142,12 @@ class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
             class_id = f"{cls.__module__}.{cls.__name__}"
             key = f"django.serializer.list:{class_id}:{model_tag(model)}:{fingerprint}"
         except Exception:
-            return super().to_representation(data)
+            return serializer_super.to_representation(data)
 
         if (cached := core.get(key)) is not None:
             return cached
 
-        result = super().to_representation(data)
+        result = serializer_super.to_representation(data)
         deps = {model_tag(model)} | {model_tag(m) for m in self._get_related_models()}
         core.set(key, result, list(deps))
         return result
@@ -153,7 +158,8 @@ def cacheable_serializer(cls):
         cls = type(cls.__name__, (CacheableSerializerMixin, cls), {})
 
     if hasattr(cls, "many_init"):
-        orig_many_init = cls.many_init
+        cls_dynamic = cast(Any, cls)
+        orig_many_init = cls_dynamic.many_init
 
         @functools.wraps(orig_many_init)
         def many_init(*args, **kwargs):
@@ -165,13 +171,14 @@ def cacheable_serializer(cls):
                     {},
                 )
                 list_serializer.zoocache_model = getattr(cls, "zoocache_model", None)
-                if hasattr(cls, "Meta") and hasattr(cls.Meta, "model"):
+                cls_meta = getattr(cls, "Meta", None)
+                if cls_meta is not None and hasattr(cls_meta, "model"):
                     if not hasattr(list_serializer, "Meta"):
-                        list_serializer.Meta = type("Meta", (), {"model": cls.Meta.model})
+                        list_serializer.Meta = type("Meta", (), {"model": cls_meta.model})
                     elif not hasattr(list_serializer.Meta, "model"):
-                        list_serializer.Meta.model = cls.Meta.model
+                        list_serializer.Meta.model = cls_meta.model
             return list_serializer
 
-        cls.many_init = many_init
+        cls_dynamic.many_init = many_init
 
     return cls

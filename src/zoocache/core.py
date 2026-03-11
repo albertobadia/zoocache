@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable
+from contextlib import nullcontext
 from typing import Any
 
 from zoocache._zoocache import Core, hash_key
@@ -17,7 +18,7 @@ class CacheManager:
         self.node_id = uuid.uuid4().hex[:8]
         self.core: Core | None = None
         self.config: dict[str, Any] = {}
-        self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
+        self._flight_signals: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]]] = {}
         self._telemetry: TelemetryManager = TelemetryManager()
         self._last_tti_dropped: int = 0
         self._last_silent_errors: int = 0
@@ -44,7 +45,7 @@ class CacheManager:
         with self._lock:
             if self.core is None:
                 core_args = {k: v for k, v in self.config.items() if k != "prune_after" and v is not None}
-                core_args["node_id"] = getattr(self, "node_id", uuid.uuid4().hex[:8])
+                core_args["node_id"] = self.node_id
                 self.core = Core(**core_args)
             return self.core
 
@@ -176,33 +177,6 @@ def _resolve_flight_signals(key: str, exc: BaseException | None = None) -> None:
                 evt_loop.call_soon_threadsafe(fut.set_result, None)
 
 
-def _register_flight_signal(key: str) -> asyncio.Future:
-    loop = asyncio.get_running_loop()
-    fut = loop.create_future()
-    _manager._flight_signals.setdefault(key, []).append((loop, fut))
-    return fut
-
-
-def _unregister_flight_signal(key: str, fut: asyncio.Future) -> None:
-    signals = _manager._flight_signals.get(key)
-    if signals:
-        try:
-            signals.remove((asyncio.get_running_loop(), fut))
-            if not signals:
-                del _manager._flight_signals[key]
-        except ValueError:
-            pass
-
-
-async def _wait_for_leader(fut: Any) -> Any:
-    timeout = _manager.config.get("flight_timeout", 60)
-    try:
-        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
-    except asyncio.TimeoutError:
-        _manager.telemetry.increment("singleflight_timeouts_total")
-        raise RuntimeError("Thundering herd leader failed") from None
-
-
 def _generate_key(func: Callable, namespace: str | None, args: tuple, kwargs: dict) -> str:
     kw_items = sorted(kwargs.items()) if kwargs else []
     obj = (func.__module__, func.__qualname__, args, kw_items)
@@ -220,8 +194,17 @@ def _generate_key(func: Callable, namespace: str | None, args: tuple, kwargs: di
 
 def _collect_deps(deps: Callable | Iterable[str] | None, args: tuple, kwargs: dict) -> list[str]:
     base = list(get_current_deps() or [])
-    extra = (deps(*args, **kwargs) if callable(deps) else deps) if deps else []
-    return list(set(base + list(extra)))
+    extra = deps(*args, **kwargs) if callable(deps) else deps
+    if not extra:
+        return base
+    return list(dict.fromkeys([*base, *list(extra)]))
+
+
+def _timed(metric_name: str):
+    telemetry = _manager.telemetry
+    if telemetry.enabled:
+        return telemetry.time_operation(metric_name)
+    return nullcontext()
 
 
 def cacheable(
@@ -236,20 +219,14 @@ def cacheable(
         async def async_wrapper(*args, **kwargs):
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
 
-            if _manager.telemetry.enabled:
-                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
-                    val, _, is_hit = core.get_or_entry_sync(key)
-            else:
+            with _timed("cache_get_duration_seconds"):
                 val, _, is_hit = core.get_or_entry_sync(key)
             if is_hit:
                 if _manager.telemetry.enabled:
                     _manager.telemetry.increment("cache_hits_total")
                 return val
 
-            if _manager.telemetry.enabled:
-                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
-                    val, is_leader, is_hit = await core.get_or_entry_async(key)
-            else:
+            with _timed("cache_get_duration_seconds"):
                 val, is_leader, is_hit = await core.get_or_entry_async(key)
 
             if is_hit:
@@ -267,10 +244,7 @@ def cacheable(
             try:
                 with DepsTracker():
                     res = await fn(*args, **kwargs)
-                    if _manager.telemetry.enabled:
-                        with _manager.telemetry.time_operation("cache_set_duration_seconds"):
-                            await core.set_async(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
-                    else:
+                    with _timed("cache_set_duration_seconds"):
                         await core.set_async(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 success = True
                 return res
@@ -287,10 +261,7 @@ def cacheable(
             core, key = _manager.get_core(), _generate_key(fn, namespace, args, kwargs)
             _manager.check_telemetry()
 
-            if _manager.telemetry.enabled:
-                with _manager.telemetry.time_operation("cache_get_duration_seconds"):
-                    val, is_leader, is_hit = core.get_or_entry(key)
-            else:
+            with _timed("cache_get_duration_seconds"):
                 val, is_leader, is_hit = core.get_or_entry(key)
 
             if is_hit:
@@ -309,10 +280,7 @@ def cacheable(
             try:
                 with DepsTracker():
                     res = fn(*args, **kwargs)
-                    if _manager.telemetry.enabled:
-                        with _manager.telemetry.time_operation("cache_set_duration_seconds"):
-                            core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
-                    else:
+                    with _timed("cache_set_duration_seconds"):
                         core.set(key, res, _collect_deps(deps, args, kwargs), ttl=ttl)
                 success = True
                 return res

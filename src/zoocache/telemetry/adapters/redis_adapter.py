@@ -1,6 +1,5 @@
 import logging
 import threading
-import time
 from collections import defaultdict
 
 from zoocache._zoocache import Core
@@ -24,8 +23,7 @@ class RedisTelemetryAdapter(TelemetryAdapter):
         self.core = core
 
     def _flush_loop(self) -> None:
-        while not self._shutdown_event.is_set():
-            time.sleep(self.flush_interval)
+        while not self._shutdown_event.wait(self.flush_interval):
             self._flush()
 
     def _flush(self) -> None:
@@ -40,8 +38,8 @@ class RedisTelemetryAdapter(TelemetryAdapter):
 
         try:
             self.core.flush_metrics(snapshot)
-        except Exception as e:
-            logger.debug(f"Failed to flush metrics to Redis: {e}")
+        except Exception as exc:
+            logger.debug("Failed to flush metrics to Redis: %s", exc)
             with self._lock:
                 for key, value in snapshot.items():
                     self._counters[key] += value

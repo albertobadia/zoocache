@@ -1,4 +1,3 @@
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -87,11 +86,9 @@ def test_redis_adapter_flush_no_core():
 
 def test_redis_adapter_flush_with_core():
     mock_core = MagicMock()
-    adapter = RedisTelemetryAdapter(core=mock_core, flush_interval=0.1)
+    adapter = RedisTelemetryAdapter(core=mock_core, flush_interval=60.0)
     adapter.increment("hits", 1.0)
     adapter.increment("misses", 2.0)
-
-    time.sleep(0.15)
 
     adapter._flush()
 

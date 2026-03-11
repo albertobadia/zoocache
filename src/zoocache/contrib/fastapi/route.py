@@ -2,6 +2,7 @@ import asyncio
 import functools
 import inspect
 from collections.abc import Callable, Iterable
+from contextlib import nullcontext
 from typing import Any
 
 from fastapi import BackgroundTasks, Request, Response
@@ -24,6 +25,13 @@ def _extract_hashable_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if not isinstance(v, (Request, Response, BackgroundTasks))}
 
 
+def _timed(metric_name: str):
+    telemetry = _manager.telemetry
+    if telemetry.enabled:
+        return telemetry.time_operation(metric_name)
+    return nullcontext()
+
+
 def _make_async_wrapper(fn: Callable, namespace: str | None, deps: Callable | Iterable[str] | None, ttl: int | None):
     @functools.wraps(fn)
     async def async_wrapper(*args, **kwargs):
@@ -32,7 +40,7 @@ def _make_async_wrapper(fn: Callable, namespace: str | None, deps: Callable | It
         _manager.check_telemetry()
 
         while True:
-            with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+            with _timed("cache_get_duration_seconds"):
                 val, is_leader, is_hit = await core.get_or_entry_async(key)
 
             if is_hit:
@@ -51,7 +59,7 @@ def _make_async_wrapper(fn: Callable, namespace: str | None, deps: Callable | It
                 res = await fn(*args, **kwargs)
                 to_cache = _prepare_for_cache(res)
 
-                with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                with _timed("cache_set_duration_seconds"):
                     await core.set_async(key, to_cache, _collect_deps(deps, args, kwargs), ttl=ttl)
 
             success = True
@@ -73,7 +81,7 @@ def _make_sync_wrapper(fn: Callable, namespace: str | None, deps: Callable | Ite
         core, key = _manager.get_core(), _generate_key(fn, namespace, args, hashable_kwargs)
         _manager.check_telemetry()
 
-        with _manager.telemetry.time_operation("cache_get_duration_seconds"):
+        with _timed("cache_get_duration_seconds"):
             val, is_leader, is_hit = core.get_or_entry(key)
 
         if is_hit:
@@ -85,14 +93,12 @@ def _make_sync_wrapper(fn: Callable, namespace: str | None, deps: Callable | Ite
             return fn(*args, **kwargs)
 
         success = False
-        res = None
-        to_cache = None
         try:
             with DepsTracker():
                 res = fn(*args, **kwargs)
                 to_cache = _prepare_for_cache(res)
 
-                with _manager.telemetry.time_operation("cache_set_duration_seconds"):
+                with _timed("cache_set_duration_seconds"):
                     core.set(key, to_cache, _collect_deps(deps, args, kwargs), ttl=ttl)
             success = True
             return res
