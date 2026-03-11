@@ -1,6 +1,6 @@
 [package]
 name = "zoocache"
-version = "2026.3.3"
+version = "2026.3.11"
 edition = "2024"
 
 [lib]
