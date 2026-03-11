@@ -103,28 +103,74 @@ def configure(
     lru_cache_size: int = 10_000,
     telemetry: TelemetryManager | None = None,
 ) -> None:
+    defaults: dict[str, Any] = {
+        "storage_url": None,
+        "bus_url": None,
+        "prefix": None,
+        "prune_after": None,
+        "default_ttl": None,
+        "read_extend_ttl": True,
+        "max_entries": None,
+        "lmdb_map_size": None,
+        "flight_timeout": 60,
+        "tti_flush_secs": 30,
+        "auto_prune_secs": None,
+        "auto_prune_interval": 3600,
+        "lru_update_interval": 30,
+        "channel_capacity": 1_000_000,
+        "batch_size": 1000,
+        "lru_cache_size": 10_000,
+    }
+
+    raw_config = {
+        "storage_url": storage_url,
+        "bus_url": bus_url,
+        "prefix": prefix,
+        "prune_after": prune_after,
+        "default_ttl": default_ttl,
+        "read_extend_ttl": read_extend_ttl,
+        "max_entries": max_entries,
+        "lmdb_map_size": lmdb_map_size,
+        "flight_timeout": flight_timeout,
+        "tti_flush_secs": tti_flush_secs,
+        "auto_prune_secs": auto_prune_secs,
+        "auto_prune_interval": auto_prune_interval,
+        "lru_update_interval": lru_update_interval,
+        "channel_capacity": channel_capacity,
+        "batch_size": batch_size,
+        "lru_cache_size": lru_cache_size,
+    }
+
+    if _manager.is_configured() and _manager.config:
+        normalized_config = dict(raw_config)
+        for key, default_value in defaults.items():
+            if normalized_config.get(key) == default_value and key in _manager.config:
+                normalized_config[key] = _manager.config[key]
+    else:
+        normalized_config = raw_config
+
     if telemetry is None and bus_url and bus_url.startswith("redis://"):
         from zoocache.telemetry.adapters.redis_adapter import RedisTelemetryAdapter
 
         telemetry = TelemetryManager([RedisTelemetryAdapter(None, flush_interval=1.0)])
 
     _manager.configure(
-        storage_url=storage_url,
-        bus_url=bus_url,
-        prefix=prefix,
-        prune_after=prune_after,
-        default_ttl=default_ttl,
-        read_extend_ttl=read_extend_ttl,
-        max_entries=max_entries,
-        lmdb_map_size=lmdb_map_size,
-        flight_timeout=flight_timeout,
-        tti_flush_secs=tti_flush_secs,
-        auto_prune_secs=auto_prune_secs,
-        auto_prune_interval=auto_prune_interval,
-        lru_update_interval=lru_update_interval,
-        channel_capacity=channel_capacity,
-        batch_size=batch_size,
-        lru_cache_size=lru_cache_size,
+        storage_url=normalized_config["storage_url"],
+        bus_url=normalized_config["bus_url"],
+        prefix=normalized_config["prefix"],
+        prune_after=normalized_config["prune_after"],
+        default_ttl=normalized_config["default_ttl"],
+        read_extend_ttl=normalized_config["read_extend_ttl"],
+        max_entries=normalized_config["max_entries"],
+        lmdb_map_size=normalized_config["lmdb_map_size"],
+        flight_timeout=normalized_config["flight_timeout"],
+        tti_flush_secs=normalized_config["tti_flush_secs"],
+        auto_prune_secs=normalized_config["auto_prune_secs"],
+        auto_prune_interval=normalized_config["auto_prune_interval"],
+        lru_update_interval=normalized_config["lru_update_interval"],
+        channel_capacity=normalized_config["channel_capacity"],
+        batch_size=normalized_config["batch_size"],
+        lru_cache_size=normalized_config["lru_cache_size"],
         telemetry=telemetry,
     )
 

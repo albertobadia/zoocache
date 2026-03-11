@@ -133,3 +133,10 @@ def test_reset_closes_previous_telemetry_adapters():
     reset()
 
     assert adapter.closed is True
+
+
+def test_configure_should_be_idempotent_with_partial_same_values():
+    reset()
+    configure(prefix="audit", default_ttl=10)
+
+    configure(prefix="audit")

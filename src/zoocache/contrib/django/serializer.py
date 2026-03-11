@@ -1,4 +1,5 @@
 import functools
+import json
 from hashlib import sha256
 from typing import Any, cast
 
@@ -95,13 +96,58 @@ class BaseCacheableSerializerMixin:
 
 
 class CacheableSerializerMixin(BaseCacheableSerializerMixin):
+    def _serialize_context_value(self, value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        if isinstance(value, dict):
+            return {
+                str(k): self._serialize_context_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [self._serialize_context_value(v) for v in value]
+        if hasattr(value, "pk"):
+            return {"_pk": getattr(value, "pk", None), "_type": value.__class__.__name__}
+        return str(value)
+
+    def _get_context_fingerprint(self) -> str:
+        context = getattr(self, "context", None)
+        if not context:
+            return "nocx"
+
+        request = context.get("request") if hasattr(context, "get") else None
+        user = getattr(request, "user", None) if request is not None else None
+
+        user_id = getattr(user, "pk", None)
+        if callable(user_id):
+            user_id = user_id()
+
+        safe_context = {}
+        if hasattr(context, "items"):
+            for key, value in context.items():
+                if key == "request":
+                    continue
+                safe_context[str(key)] = self._serialize_context_value(value)
+
+        normalized = {
+            "keys": sorted(context.keys()) if hasattr(context, "keys") else [],
+            "user_id": user_id,
+            "is_staff": bool(getattr(user, "is_staff", False)) if user is not None else False,
+            "is_authenticated": bool(getattr(user, "is_authenticated", False)) if user is not None else False,
+            "lang": getattr(request, "LANGUAGE_CODE", None) if request is not None else None,
+            "context_values": safe_context,
+        }
+        payload = json.dumps(normalized, sort_keys=True, default=str)
+        return sha256(payload.encode()).hexdigest()[:16]
+
     def _get_cache_key(self, instance):
         model = self._get_zoo_model()
         model_label = model_tag(model) if model else "unknown"
         pk = getattr(instance, "pk", id(instance))
         cls = self.__class__
         class_id = f"{cls.__module__}.{cls.__name__}"
-        return f"django.serializer:{class_id}:{model_label}:{pk}"
+        context_fingerprint = self._get_context_fingerprint()
+        return f"django.serializer:{class_id}:{model_label}:{pk}:{context_fingerprint}"
 
     def to_representation(self, instance):
         serializer_super = cast(Any, super())
@@ -124,6 +170,50 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
 
 
 class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
+    def _serialize_context_value(self, value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        if isinstance(value, dict):
+            return {
+                str(k): self._serialize_context_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [self._serialize_context_value(v) for v in value]
+        if hasattr(value, "pk"):
+            return {"_pk": getattr(value, "pk", None), "_type": value.__class__.__name__}
+        return str(value)
+
+    def _get_context_fingerprint(self) -> str:
+        context = getattr(self, "context", None)
+        if not context:
+            return "nocx"
+
+        request = context.get("request") if hasattr(context, "get") else None
+        user = getattr(request, "user", None) if request is not None else None
+
+        user_id = getattr(user, "pk", None)
+        if callable(user_id):
+            user_id = user_id()
+
+        safe_context = {}
+        if hasattr(context, "items"):
+            for key, value in context.items():
+                if key == "request":
+                    continue
+                safe_context[str(key)] = self._serialize_context_value(value)
+
+        normalized = {
+            "keys": sorted(context.keys()) if hasattr(context, "keys") else [],
+            "user_id": user_id,
+            "is_staff": bool(getattr(user, "is_staff", False)) if user is not None else False,
+            "is_authenticated": bool(getattr(user, "is_authenticated", False)) if user is not None else False,
+            "lang": getattr(request, "LANGUAGE_CODE", None) if request is not None else None,
+            "context_values": safe_context,
+        }
+        payload = json.dumps(normalized, sort_keys=True, default=str)
+        return sha256(payload.encode()).hexdigest()[:16]
+
     def to_representation(self, data):
         serializer_super = cast(Any, super())
         core = _manager.get_core()
@@ -140,7 +230,8 @@ class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
             fingerprint = sha256(f"{sql}|{params}".encode()).hexdigest()[:16]
             cls = self.__class__
             class_id = f"{cls.__module__}.{cls.__name__}"
-            key = f"django.serializer.list:{class_id}:{model_tag(model)}:{fingerprint}"
+            context_fingerprint = self._get_context_fingerprint()
+            key = f"django.serializer.list:{class_id}:{model_tag(model)}:{fingerprint}:{context_fingerprint}"
         except Exception:
             return serializer_super.to_representation(data)
 
