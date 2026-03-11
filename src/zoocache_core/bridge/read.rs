@@ -144,7 +144,8 @@ impl Core {
                                     None
                                 }
                             });
-                            Ok((val, false, true))
+                            let is_hit = val.is_some();
+                            Ok((val, false, is_hit))
                         }
                         crate::flight::FlightStatus::Error => {
                             Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -274,7 +275,8 @@ impl Core {
                                 None
                             }
                         });
-                        Ok((val, false, true))
+                        let is_hit = val.is_some();
+                        Ok((val, false, is_hit))
                     }
                     FlightStatus::Error => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                         "Thundering herd leader failed",

@@ -96,9 +96,9 @@ pub(crate) fn cleanup_stale_flights(
                 .store(FlightStatus::Error as u8, Ordering::Release);
             flight.notify.notify_waiters();
             removed += 1;
-            false // remove from map
+            false
         } else {
-            true // keep in map
+            true
         }
     });
 

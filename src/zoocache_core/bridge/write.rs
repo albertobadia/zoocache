@@ -40,19 +40,13 @@ impl Core {
                 && current > max
             {
                 let to_evict = current - max + (max / 10).max(1);
-                let storage_clone = Arc::clone(&storage);
-                let tti_state_clone = self.tti_state.clone();
-                let trie_clone = trie.clone();
-
-                RUNTIME.spawn_blocking(move || {
-                    if let Some(Ok(_evicted)) = storage_clone.try_evict_lru_sync(to_evict) {
-                        if let Some(state) = &tti_state_clone {
-                            let _ = state.tx.try_send(WorkerMsg::Prune(0));
-                        } else {
-                            trie_clone.prune(0);
-                        }
+                if let Some(Ok(_evicted)) = storage.try_evict_lru_sync(to_evict) {
+                    if let Some(state) = &self.tti_state {
+                        let _ = state.tx.try_send(WorkerMsg::Prune(0));
+                    } else {
+                        trie.prune(0);
                     }
-                });
+                }
             }
             return res;
         }
@@ -109,19 +103,13 @@ impl Core {
                 && current > max
             {
                 let to_evict = current - max + (max / 10).max(1);
-                let storage_clone = Arc::clone(&storage);
-                let tti_state_clone = self.tti_state.clone();
-                let trie_clone = trie.clone();
-
-                RUNTIME.spawn_blocking(move || {
-                    if let Some(Ok(_evicted)) = storage_clone.try_evict_lru_sync(to_evict) {
-                        if let Some(state) = &tti_state_clone {
-                            let _ = state.tx.try_send(WorkerMsg::Prune(0));
-                        } else {
-                            trie_clone.prune(0);
-                        }
+                if let Some(Ok(_evicted)) = storage.try_evict_lru_sync(to_evict) {
+                    if let Some(state) = &self.tti_state {
+                        let _ = state.tx.try_send(WorkerMsg::Prune(0));
+                    } else {
+                        trie.prune(0);
                     }
-                });
+                }
             }
             return pyo3_async_runtimes::tokio::future_into_py(py, async move {
                 Ok(Python::attach(|py| py.None()))

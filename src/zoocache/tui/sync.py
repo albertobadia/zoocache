@@ -13,7 +13,7 @@ class ClusterState:
 
 
 class ClusterSynchronizer:
-    def __init__(self, redis_client: redis.Redis, pubsub: redis.client.PubSub, prefix: str = "zoocache"):
+    def __init__(self, redis_client: redis.Redis, pubsub: Any, prefix: str = "zoocache"):
         self.redis_client = redis_client
         self.pubsub = pubsub
         self.prefix = prefix
@@ -31,7 +31,9 @@ class ClusterSynchronizer:
         return events
 
     async def fetch_state(self) -> ClusterState:
-        node_keys = await self.redis_client.keys(f"{self.prefix}:node:*")
+        node_keys: list[str] = []
+        async for key in self.redis_client.scan_iter(f"{self.prefix}:node:*"):
+            node_keys.append(key)
 
         totals = {
             "cache_hits_total": 0.0,

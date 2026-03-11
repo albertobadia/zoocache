@@ -64,4 +64,4 @@ jobs:
 
             <!-- pr-changelog -->
             ${{ steps.read-changelog.outputs.content }}
-          edit-mode: ${{ steps.find-comment.outputs.comment-id != '' && 'replace' || 'create' }}
+          edit-mode: replace

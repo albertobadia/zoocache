@@ -1,4 +1,3 @@
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,7 +12,7 @@ def test_redis_adapter_increment():
     adapter.increment("misses", 1.0, {"tag": "test"})
 
     assert adapter._counters["hits"] == 3.0
-    assert adapter._counters["misses_test"] == 1.0
+    assert adapter._counters["misses_tag=test"] == 1.0
 
     adapter.close()
 
@@ -40,8 +39,19 @@ def test_redis_adapter_build_metric_name():
     adapter = RedisTelemetryAdapter(core=None, flush_interval=0.1)
 
     assert adapter._build_metric_name("hits", None) == "hits"
-    assert adapter._build_metric_name("hits", {"tag": "val"}) == "hits_val"
-    assert adapter._build_metric_name("hits", {"a": "1", "b": "2"}) == "hits_1_2"
+    assert adapter._build_metric_name("hits", {"tag": "val"}) == "hits_tag=val"
+    assert adapter._build_metric_name("hits", {"a": "1", "b": "2"}) == "hits_a=1_b=2"
+
+    adapter.close()
+
+
+def test_redis_adapter_metric_name_includes_label_keys_to_avoid_collisions():
+    adapter = RedisTelemetryAdapter(core=None, flush_interval=0.1)
+
+    first = adapter._build_metric_name("metric", {"region": "us", "env": "prod"})
+    second = adapter._build_metric_name("metric", {"tier": "us", "role": "prod"})
+
+    assert first != second
 
     adapter.close()
 
@@ -76,11 +86,9 @@ def test_redis_adapter_flush_no_core():
 
 def test_redis_adapter_flush_with_core():
     mock_core = MagicMock()
-    adapter = RedisTelemetryAdapter(core=mock_core, flush_interval=0.1)
+    adapter = RedisTelemetryAdapter(core=mock_core, flush_interval=60.0)
     adapter.increment("hits", 1.0)
     adapter.increment("misses", 2.0)
-
-    time.sleep(0.15)
 
     adapter._flush()
 

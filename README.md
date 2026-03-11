@@ -52,10 +52,10 @@ Traditional caches use **TTL** (Time To Live), which causes stale data and cache
 
 | Feature | **🐾 ZooCache** | **🔴 Redis** | **🐶 Dogpile** | **diskcache** |
 |---------|:---------------:|:------------:|:-------------:|:-------------:|
-| **Semantic Invalidation** | ✅ Trie-based | ❌ Manual | ❌ Manual | ❌ TTL only |
-| **Smart Serialization** | ✅ MsgPack+LZ4 | ❌ No | ❌ No | ❌ No |
-| **Distributed Sync** | ✅ Redis Bus | ❌ Pub/Sub | ❌ No | ❌ No |
-| **Observability** | ✅ Full | ❌ Basic | ❌ No | ❌ No |
+| **Semantic Invalidation** | Trie-based | Manual | Manual | TTL only |
+| **Smart Serialization** | MsgPack+LZ4 | No | No | No |
+| **Distributed Sync** | Redis Bus | Pub/Sub | No | No |
+| **Observability** | Full | Basic | No | No |
 
 ---
 

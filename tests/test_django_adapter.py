@@ -28,6 +28,7 @@ from zoocache.contrib.django import (  # noqa: E402
     _model_to_raw,
     _raw_to_instance,
 )
+from zoocache.contrib.django.model import INTERNAL_CACHE_KEY_RELATED  # noqa: E402
 
 
 class Author(models.Model):
@@ -230,6 +231,19 @@ class TestQuerySetCaching:
 
         old = list(Author.cached.filter(age__gte=28))
         assert len(old) == 1
+
+
+def test_raw_to_instance_does_not_mutate_input_payload():
+    payload = {
+        "id": 1,
+        "name": "Alice",
+        "age": 30,
+        INTERNAL_CACHE_KEY_RELATED: {},
+    }
+
+    _raw_to_instance(Author, payload)
+
+    assert INTERNAL_CACHE_KEY_RELATED in payload
 
 
 class TestInvalidation:

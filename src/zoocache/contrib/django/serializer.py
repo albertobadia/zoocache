@@ -1,33 +1,33 @@
 import functools
+import json
 from hashlib import sha256
+from typing import Any, cast
 
 from zoocache.core import _manager
 
 try:
-    from django.db import models
+    from django.db import models, transaction
     from django.db.models.signals import m2m_changed, post_delete, post_save
 
     from .util import instance_tag, model_tag
 except ImportError:
     models = None
 
-    def model_tag(x):
-        return str(x)
+    def model_tag(model_or_instance):
+        return str(model_or_instance)
 
-    def instance_tag(x):
-        return str(x)
+    def instance_tag(instance):
+        return str(instance)
 
 
 class BaseCacheableSerializerMixin:
-    """Shared logic for single and list serializers."""
-
-    _zoo_signals_connected = set()
-    _zoo_related_models_cache = {}
+    _zoo_signals_connected: set[type[Any]] = set()
+    _zoo_related_models_cache: dict[type[Any], set[Any]] = {}
 
     def _get_zoo_model(self):
-        """Introspect model from Meta or zoocache_model attribute."""
-        if hasattr(self, "Meta") and hasattr(self.Meta, "model"):
-            return self.Meta.model
+        meta = getattr(self, "Meta", None)
+        if meta is not None and hasattr(meta, "model"):
+            return meta.model
         return getattr(self, "zoocache_model", None)
 
     def _get_related_models(self):
@@ -37,10 +37,11 @@ class BaseCacheableSerializerMixin:
 
         models_found = {base_model} if (base_model := self._get_zoo_model()) else set()
 
-        if hasattr(self, "child"):
-            res = self.child._get_related_models()
-            self._zoo_related_models_cache[cls] = res
-            return res
+        child = getattr(self, "child", None)
+        if child is not None and hasattr(child, "_get_related_models"):
+            related_models = child._get_related_models()
+            self._zoo_related_models_cache[cls] = related_models
+            return related_models
 
         fields = getattr(self, "fields", {}) or getattr(self, "_declared_fields", {})
 
@@ -66,16 +67,18 @@ class BaseCacheableSerializerMixin:
             return
 
         def _invalidate_handler(sender, instance=None, **kwargs):
-            core = _manager.get_core()
-            if instance and hasattr(instance, "pk"):
-                core.invalidate(instance_tag(instance))
-            core.invalidate(model_tag(sender))
+            def _do_invalidate():
+                core = _manager.get_core()
+                if instance and hasattr(instance, "pk"):
+                    core.invalidate(instance_tag(instance))
+                core.invalidate(model_tag(sender))
+
+            transaction.on_commit(_do_invalidate)
 
         uid = f"zoocache_serializer_{model_tag(model)}"
         post_save.connect(_invalidate_handler, sender=model, dispatch_uid=uid, weak=False)
         post_delete.connect(_invalidate_handler, sender=model, dispatch_uid=uid, weak=False)
 
-        # M2M signals must be connected to the through model
         for field in model._meta.local_many_to_many:
             through = field.remote_field.through
             m2m_changed.connect(
@@ -86,7 +89,6 @@ class BaseCacheableSerializerMixin:
             )
 
     def _setup_caching(self):
-        """One-time setup for this serializer class."""
         if self.__class__ not in self._zoo_signals_connected:
             for model in self._get_related_models():
                 self._connect_signals(model)
@@ -94,26 +96,66 @@ class BaseCacheableSerializerMixin:
 
 
 class CacheableSerializerMixin(BaseCacheableSerializerMixin):
-    """
-    Mixin to add automatic caching to serializers.
-    Designed to be framework-agnostic but compatible with DRF.
-    """
+    def _serialize_context_value(self, value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        if isinstance(value, dict):
+            return {
+                str(k): self._serialize_context_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [self._serialize_context_value(v) for v in value]
+        if hasattr(value, "pk"):
+            return {"_pk": getattr(value, "pk", None), "_type": value.__class__.__name__}
+        return str(value)
+
+    def _get_context_fingerprint(self) -> str:
+        context = getattr(self, "context", None)
+        if not context:
+            return "nocx"
+
+        request = context.get("request") if hasattr(context, "get") else None
+        user = getattr(request, "user", None) if request is not None else None
+
+        user_id = getattr(user, "pk", None)
+        if callable(user_id):
+            user_id = user_id()
+
+        safe_context = {}
+        if hasattr(context, "items"):
+            for key, value in context.items():
+                if key == "request":
+                    continue
+                safe_context[str(key)] = self._serialize_context_value(value)
+
+        normalized = {
+            "keys": sorted(context.keys()) if hasattr(context, "keys") else [],
+            "user_id": user_id,
+            "is_staff": bool(getattr(user, "is_staff", False)) if user is not None else False,
+            "is_authenticated": bool(getattr(user, "is_authenticated", False)) if user is not None else False,
+            "lang": getattr(request, "LANGUAGE_CODE", None) if request is not None else None,
+            "context_values": safe_context,
+        }
+        payload = json.dumps(normalized, sort_keys=True, default=str)
+        return sha256(payload.encode()).hexdigest()[:16]
 
     def _get_cache_key(self, instance):
         model = self._get_zoo_model()
         model_label = model_tag(model) if model else "unknown"
         pk = getattr(instance, "pk", id(instance))
-        # Use full class path to avoid collisions
         cls = self.__class__
         class_id = f"{cls.__module__}.{cls.__name__}"
-        return f"django.serializer:{class_id}:{model_label}:{pk}"
+        context_fingerprint = self._get_context_fingerprint()
+        return f"django.serializer:{class_id}:{model_label}:{pk}:{context_fingerprint}"
 
     def to_representation(self, instance):
+        serializer_super = cast(Any, super())
         core = _manager.get_core()
         model = self._get_zoo_model()
 
         if not model or not hasattr(instance, "pk"):
-            return super().to_representation(instance)
+            return serializer_super.to_representation(instance)
 
         self._setup_caching()
 
@@ -121,21 +163,64 @@ class CacheableSerializerMixin(BaseCacheableSerializerMixin):
         if (cached := core.get(key)) is not None:
             return cached
 
-        data = super().to_representation(instance)
+        data = serializer_super.to_representation(instance)
         deps = {instance_tag(instance)} | {model_tag(m) for m in self._get_related_models()}
         core.set(key, data, list(deps))
         return data
 
 
 class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
-    """Specialized mixin for ListSerializers to avoid redundant DB queries."""
+    def _serialize_context_value(self, value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        if isinstance(value, dict):
+            return {
+                str(k): self._serialize_context_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [self._serialize_context_value(v) for v in value]
+        if hasattr(value, "pk"):
+            return {"_pk": getattr(value, "pk", None), "_type": value.__class__.__name__}
+        return str(value)
+
+    def _get_context_fingerprint(self) -> str:
+        context = getattr(self, "context", None)
+        if not context:
+            return "nocx"
+
+        request = context.get("request") if hasattr(context, "get") else None
+        user = getattr(request, "user", None) if request is not None else None
+
+        user_id = getattr(user, "pk", None)
+        if callable(user_id):
+            user_id = user_id()
+
+        safe_context = {}
+        if hasattr(context, "items"):
+            for key, value in context.items():
+                if key == "request":
+                    continue
+                safe_context[str(key)] = self._serialize_context_value(value)
+
+        normalized = {
+            "keys": sorted(context.keys()) if hasattr(context, "keys") else [],
+            "user_id": user_id,
+            "is_staff": bool(getattr(user, "is_staff", False)) if user is not None else False,
+            "is_authenticated": bool(getattr(user, "is_authenticated", False)) if user is not None else False,
+            "lang": getattr(request, "LANGUAGE_CODE", None) if request is not None else None,
+            "context_values": safe_context,
+        }
+        payload = json.dumps(normalized, sort_keys=True, default=str)
+        return sha256(payload.encode()).hexdigest()[:16]
 
     def to_representation(self, data):
+        serializer_super = cast(Any, super())
         core = _manager.get_core()
         model = self._get_zoo_model()
 
         if not model or not hasattr(data, "query"):
-            return super().to_representation(data)
+            return serializer_super.to_representation(data)
 
         self._setup_caching()
 
@@ -145,27 +230,27 @@ class CacheableListSerializerMixin(BaseCacheableSerializerMixin):
             fingerprint = sha256(f"{sql}|{params}".encode()).hexdigest()[:16]
             cls = self.__class__
             class_id = f"{cls.__module__}.{cls.__name__}"
-            key = f"django.serializer.list:{class_id}:{model_tag(model)}:{fingerprint}"
+            context_fingerprint = self._get_context_fingerprint()
+            key = f"django.serializer.list:{class_id}:{model_tag(model)}:{fingerprint}:{context_fingerprint}"
         except Exception:
-            # Fallback to standard representation if query fails (e.g. empty queryset or complex query)
-            return super().to_representation(data)
+            return serializer_super.to_representation(data)
 
         if (cached := core.get(key)) is not None:
             return cached
 
-        result = super().to_representation(data)
+        result = serializer_super.to_representation(data)
         deps = {model_tag(model)} | {model_tag(m) for m in self._get_related_models()}
         core.set(key, result, list(deps))
         return result
 
 
 def cacheable_serializer(cls):
-    """Decorator to make a serializer class cacheable."""
     if not issubclass(cls, CacheableSerializerMixin):
         cls = type(cls.__name__, (CacheableSerializerMixin, cls), {})
 
     if hasattr(cls, "many_init"):
-        orig_many_init = cls.many_init
+        cls_dynamic = cast(Any, cls)
+        orig_many_init = cls_dynamic.many_init
 
         @functools.wraps(orig_many_init)
         def many_init(*args, **kwargs):
@@ -177,13 +262,14 @@ def cacheable_serializer(cls):
                     {},
                 )
                 list_serializer.zoocache_model = getattr(cls, "zoocache_model", None)
-                if hasattr(cls, "Meta") and hasattr(cls.Meta, "model"):
+                cls_meta = getattr(cls, "Meta", None)
+                if cls_meta is not None and hasattr(cls_meta, "model"):
                     if not hasattr(list_serializer, "Meta"):
-                        list_serializer.Meta = type("Meta", (), {"model": cls.Meta.model})
+                        list_serializer.Meta = type("Meta", (), {"model": cls_meta.model})
                     elif not hasattr(list_serializer.Meta, "model"):
-                        list_serializer.Meta.model = cls.Meta.model
+                        list_serializer.Meta.model = cls_meta.model
             return list_serializer
 
-        cls.many_init = many_init
+        cls_dynamic.many_init = many_init
 
     return cls

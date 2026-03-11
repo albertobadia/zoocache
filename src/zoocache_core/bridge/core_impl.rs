@@ -30,6 +30,12 @@ impl Core {
         batch_size: usize,
         lru_cache_size: usize,
     ) -> PyResult<Self> {
+        if lru_cache_size == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "lru_cache_size must be >= 1",
+            ));
+        }
+
         set_compression_threshold(compression_threshold);
         let storage: Arc<dyn crate::storage::Storage> = match storage_url {
             Some(url) if url.starts_with("redis://") => Arc::new(

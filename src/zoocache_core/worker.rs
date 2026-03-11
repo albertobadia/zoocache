@@ -209,7 +209,7 @@ pub(crate) fn spawn_worker(
             }));
 
             match res {
-                Ok(_) => break, // Normal exit (Disconnected)
+                Ok(_) => break,
                 Err(_) => {
                     log::error!("Background worker panicked! Restarting in 3 seconds...");
                     std::thread::sleep(Duration::from_secs(3));

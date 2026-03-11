@@ -11,7 +11,6 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     cli_parser = subparsers.add_parser("cli", aliases=["dashboard"], help="Launch the TUI CLI")
-    cli_parser.add_current_env_var = "REDIS_URL"
     cli_parser.add_argument(
         "--redis",
         type=str,

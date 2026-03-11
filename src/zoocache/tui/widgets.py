@@ -6,6 +6,15 @@ from textual.containers import Container, VerticalScroll
 from textual.widgets import Static
 from textual_plotext import PlotextPlot
 
+COLOR_BY_METRIC_CLASS = {
+    "hits": "blue",
+    "misses": "yellow",
+    "invalidations": "magenta",
+    "errors": "red",
+    "timeouts": "orange",
+    "overflows": "green",
+}
+
 
 class EventLog(VerticalScroll):
     def log_event(self, summary: str, details: str = "") -> None:
@@ -113,24 +122,10 @@ class MetricDisplay(Container):
         plt = self.plot.plt
         plt.clf()
 
-        # Color mapping
-        color = "white"
-        if self.css_class == "hits":
-            color = "blue"
-        elif self.css_class == "misses":
-            color = "yellow"
-        elif self.css_class == "invalidations":
-            color = "magenta"
-        elif self.css_class == "errors":
-            color = "red"
-        elif self.css_class == "timeouts":
-            color = "orange"
-        elif self.css_class == "overflows":
-            color = "green"
+        color = COLOR_BY_METRIC_CLASS.get(self.css_class, "white")
 
         plt.plot(self.history, color=color, marker="braille")
 
-        # Add internal padding at the top of the plot by setting y-axis limits 30% higher
         max_val = max(self.history) if self.history else 0
         upper_limit = (max_val * 1.3) if max_val > 0 else 1.0
         plt.ylim(0, upper_limit)
