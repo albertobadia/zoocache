@@ -4,7 +4,7 @@ from hashlib import sha256
 from zoocache.core import _manager
 
 try:
-    from django.db import models
+    from django.db import models, transaction
     from django.db.models.signals import m2m_changed, post_delete, post_save
 
     from .util import instance_tag, model_tag
@@ -63,10 +63,13 @@ class BaseCacheableSerializerMixin:
             return
 
         def _invalidate_handler(sender, instance=None, **kwargs):
-            core = _manager.get_core()
-            if instance and hasattr(instance, "pk"):
-                core.invalidate(instance_tag(instance))
-            core.invalidate(model_tag(sender))
+            def _do_invalidate():
+                core = _manager.get_core()
+                if instance and hasattr(instance, "pk"):
+                    core.invalidate(instance_tag(instance))
+                core.invalidate(model_tag(sender))
+
+            transaction.on_commit(_do_invalidate)
 
         uid = f"zoocache_serializer_{model_tag(model)}"
         post_save.connect(_invalidate_handler, sender=model, dispatch_uid=uid, weak=False)

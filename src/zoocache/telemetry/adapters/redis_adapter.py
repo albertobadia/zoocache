@@ -49,7 +49,7 @@ class RedisTelemetryAdapter(TelemetryAdapter):
     def _build_metric_name(self, name: str, labels: dict[str, str] | None) -> str:
         if not labels:
             return name
-        label_str = "_".join(f"{v}" for k, v in sorted(labels.items()))
+        label_str = "_".join(f"{k}={v}" for k, v in sorted(labels.items()))
         return f"{name}_{label_str}"
 
     def increment(self, name: str, value: float = 1.0, labels: dict[str, str] | None = None) -> None:

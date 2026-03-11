@@ -36,7 +36,8 @@ class CacheManager:
             if self.is_configured() and any(self.config.get(k) != v for k, v in kwargs.items()):
                 raise RuntimeError("zoocache already initialized with different settings")
             self.config = kwargs
-            if telemetry is not None:
+            if telemetry is not None and telemetry is not self._telemetry:
+                self._telemetry.close()
                 self._telemetry = telemetry
 
     def get_core(self) -> Core:
@@ -70,11 +71,13 @@ class CacheManager:
                     self._last_silent_errors = current_silent
 
     def reset(self) -> None:
-        self.node_id = uuid.uuid4().hex[:8]
-        self.core = None
-        self.config = {}
-        self._flight_signals.clear()
-        self._telemetry = TelemetryManager()
+        with self._lock:
+            self._telemetry.close()
+            self.node_id = uuid.uuid4().hex[:8]
+            self.core = None
+            self.config = {}
+            self._flight_signals.clear()
+            self._telemetry = TelemetryManager()
 
 
 _manager = CacheManager()

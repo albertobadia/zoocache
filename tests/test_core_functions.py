@@ -3,6 +3,8 @@ from unittest.mock import MagicMock
 
 from zoocache import configure, prune, reset, version
 from zoocache.core import _manager
+from zoocache.telemetry import TelemetryManager
+from zoocache.telemetry.base import TelemetryAdapter
 
 
 def test_version_returns_string():
@@ -101,3 +103,33 @@ def test_check_telemetry_rate_limited():
 
     mock_core.tti_dropped_messages.assert_not_called()
     mock_core.silent_errors.assert_not_called()
+
+
+class _CloseTrackingAdapter(TelemetryAdapter):
+    def __init__(self):
+        self.closed = False
+
+    def increment(self, name, value=1.0, labels=None):
+        return None
+
+    def observe(self, name, value, labels=None):
+        return None
+
+    def set_gauge(self, name, value, labels=None):
+        return None
+
+    def bind_core(self, core):
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+def test_reset_closes_previous_telemetry_adapters():
+    reset()
+    adapter = _CloseTrackingAdapter()
+    configure(telemetry=TelemetryManager([adapter]))
+
+    reset()
+
+    assert adapter.closed is True

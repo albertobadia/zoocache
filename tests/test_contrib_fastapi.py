@@ -158,6 +158,42 @@ def test_sync_caching():
     assert response.json() == {"status": "ok_sync"}
     assert execution_counts.get("sync") == 1
 
+
+@pytest.mark.asyncio
+async def test_fastapi_wrapper_should_not_use_busy_wait(monkeypatch):
+    reset()
+    configure(prefix="fastapi_wait")
+
+    import zoocache.contrib.fastapi.route as fastapi_route
+
+    wait_calls = {"count": 0}
+    original_sleep = fastapi_route.asyncio.sleep
+
+    async def tracked_sleep(delay):
+        wait_calls["count"] += 1
+        return await original_sleep(delay)
+
+    monkeypatch.setattr(fastapi_route.asyncio, "sleep", tracked_sleep)
+
+    ready = __import__("asyncio").Event()
+    release = __import__("asyncio").Event()
+
+    @cache_endpoint(namespace="busy_wait")
+    async def slow_endpoint():
+        ready.set()
+        await release.wait()
+        return {"ok": True}
+
+    leader_task = __import__("asyncio").create_task(slow_endpoint())
+    await ready.wait()
+    follower_task = __import__("asyncio").create_task(slow_endpoint())
+    await original_sleep(0.06)
+    release.set()
+    result = await __import__("asyncio").gather(leader_task, follower_task)
+
+    assert result == [{"ok": True}, {"ok": True}]
+    assert wait_calls["count"] == 0
+
     response = client.get("/sync_endpoint")
     assert response.status_code == 200
     assert response.json() == {"status": "ok_sync"}

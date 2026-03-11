@@ -17,7 +17,7 @@ if not settings.configured:
 from unittest.mock import MagicMock
 
 import pytest
-from django.db import connection, models
+from django.db import connection, models, transaction
 
 from zoocache import clear, configure, get as zoo_get, reset
 from zoocache.contrib.django import cacheable_serializer, instance_tag
@@ -86,3 +86,18 @@ def test_serializer_invalidation_on_save():
 
     assert zoo_get(key) is None
     assert serializer.to_representation(obj)["name"] == "Bob Updated"
+
+
+def test_serializer_invalidation_happens_on_commit_not_before():
+    obj = Person.objects.create(name="TxUser")
+    serializer = UserSerializer(instance=obj)
+    serializer.to_representation(obj)
+    key = serializer._get_cache_key(obj)
+    assert zoo_get(key) is not None
+
+    with transaction.atomic():
+        obj.name = "TxUser Updated"
+        obj.save()
+        assert zoo_get(key) is not None
+
+    assert zoo_get(key) is None
