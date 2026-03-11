@@ -88,16 +88,9 @@ class ZooCacheCLI(App):
         yield Footer()
 
     async def on_mount(self) -> None:
-        self.event_log.log_event(
-            "System Boot: Redis Connection Secured", f"Endpoint connected successfully at: {self.redis_url}"
-        )
-        self.event_log.log_event(
-            "PubSub Active: Monitoring Invalidation Channel", f"Subscribed to cluster channel: {self.prefix}:invalidate"
-        )
-        self.event_log.log_event(
-            "PubSub Active: Monitoring Inspect Reply Channel",
-            f"Subscribed to cluster channel: {self.prefix}:inspect:reply",
-        )
+        self.event_log.log_event("Redis connected", self.redis_url)
+        self.event_log.log_event("Subscribed", f"{self.prefix}:invalidate")
+        self.event_log.log_event("Subscribed", f"{self.prefix}:inspect:reply")
 
         await self.pubsub.subscribe(f"{self.prefix}:invalidate", f"{self.prefix}:inspect:reply")
         self.set_interval(0.1, self.check_pubsub)
@@ -144,8 +137,8 @@ class ZooCacheCLI(App):
 
             if channel == f"{self.prefix}:invalidate":
                 self.event_log.log_event(
-                    "Cluster Event: Invalidation Broadcast",
-                    f"Detected invalidation pulse. Raw payload: {data}",
+                    "Invalidation broadcast",
+                    f"Payload: {data}",
                 )
             elif channel == f"{self.prefix}:inspect:reply":
                 try:

@@ -224,7 +224,6 @@ def _invalidate_m2m(instance, **kwargs):
 
 
 def _auto_configure():
-    """Attempt to configure ZooCache from Django settings."""
     if _manager.is_configured():
         return
 

@@ -27,7 +27,7 @@ class OpenTelemetryAdapter(TelemetryAdapter):
             )
 
         self._meter = meter_provider.get_meter("zoocache")
-        self._metrics: dict[str, Any] = {}
+        self._metrics: dict[tuple[str, str], Any] = {}
         self._gauge_values: dict[tuple[str, tuple], float] = {}
 
     def _get_metric(self, type_: str, name: str) -> Any:
@@ -48,7 +48,6 @@ class OpenTelemetryAdapter(TelemetryAdapter):
         self._get_metric("histogram", name).record(value, labels or {})
 
     def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
-        # OTel sync gauges use UpDownCounter add() with deltas to simulate set()
         label_tuple = tuple(sorted((labels or {}).items()))
         key = (name, label_tuple)
         prev = self._gauge_values.get(key, 0.0)
